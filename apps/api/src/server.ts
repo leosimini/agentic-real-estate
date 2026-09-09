@@ -1,12 +1,16 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { z } from 'zod';
-import { query } from '@realty/db';
+import { closeDatabase, databaseReady, query } from '@realty/db';
 
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
 
 app.get('/health', async () => ({ ok: true, service: 'api' }));
+app.get('/ready', async (_request, reply) => {
+  const ready = await databaseReady();
+  return reply.code(ready ? 200 : 503).send({ ok: ready, service: 'api', dependency: 'postgres' });
+});
 
 app.get('/v1/opportunities', async () => {
   const result = await query(`
@@ -105,3 +109,18 @@ app.post('/v1/publications', async (request, reply) => {
 
 const port = Number(process.env.PORT ?? 4000);
 await app.listen({ port, host: '0.0.0.0' });
+
+async function shutdown(signal: string) {
+  app.log.info({ signal }, 'shutting down');
+  await app.close();
+  await closeDatabase();
+}
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => {
+    void shutdown(signal).catch((error) => {
+      app.log.error(error, 'graceful shutdown failed');
+      process.exitCode = 1;
+    });
+  });
+}

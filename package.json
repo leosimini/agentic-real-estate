@@ -6,11 +6,12 @@
   "scripts": {
     "dev": "pnpm -r --parallel dev",
     "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm --filter @realty/core build && pnpm --filter @realty/db build && pnpm -r typecheck",
     "test": "pnpm -r test",
-    "db:migrate": "psql \"$DATABASE_URL\" -f infra/postgres/001_init.sql",
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "db:migrate": "pnpm --filter @realty/db migrate",
     "docker:up": "docker compose up --build",
-    "docker:down": "docker compose down -v"
+    "docker:down": "docker compose down"
   },
   "devDependencies": {
     "typescript": "^5.9.2"

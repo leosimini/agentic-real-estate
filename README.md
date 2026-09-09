@@ -17,10 +17,25 @@ The primary object is a canonical property opportunity, not a source listing. Mu
 
 ## Run locally
 
-1. Copy `.env.example` to `.env` if you want to run services outside Docker.
+1. Copy `.env.example` to `.env` when running services outside Docker or when overriding exposed ports.
 2. Run `docker compose up --build`.
 3. Open `http://localhost:3000`.
 4. API health is `http://localhost:4000/health`.
+
+If a default host port is occupied, override it without changing container networking, for example:
+
+```sh
+POSTGRES_PORT=55432 API_PORT=4400 WEB_PORT=3300 docker compose up --build
+```
+
+Migrations are ordered SQL files under `infra/postgres/`. Docker runs them through a dedicated one-shot migration service before starting the API or worker. Outside Docker, set `DATABASE_URL` and run `pnpm db:migrate`.
+
+## Validate changes
+
+```sh
+pnpm check
+docker compose config --quiet
+```
 
 ## MVP implementation sequence
 

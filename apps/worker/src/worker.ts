@@ -1,5 +1,5 @@
 import { PgBoss } from 'pg-boss';
-import { query } from '@realty/db';
+import { closeDatabase, query } from '@realty/db';
 import { basicMatchScore, type SearchCriteria, type Opportunity } from '@realty/core';
 import { monitorAgent } from './agent.js';
 
@@ -119,3 +119,18 @@ await boss.work('notification-send', async (jobs) => {
 });
 
 console.log('worker started');
+
+async function shutdown(signal: string) {
+  console.log(JSON.stringify({ level: 'info', service: 'worker', event: 'shutdown', signal }));
+  await boss.stop({ graceful: true, timeout: 30_000 });
+  await closeDatabase();
+}
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => {
+    void shutdown(signal).catch((error) => {
+      console.error(JSON.stringify({ level: 'error', service: 'worker', event: 'shutdown_failed', error: String(error) }));
+      process.exitCode = 1;
+    });
+  });
+}
