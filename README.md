@@ -15,7 +15,7 @@ The primary object is a canonical property opportunity, not a source listing. Mu
 - `packages/db`: shared PostgreSQL connection.
 - `packages/ingestion`: validated source adapters and canonical candidate scoring.
 - `packages/monitoring`: deterministic change detection, suppression, digest, and idempotency rules.
-- `packages/ai`: provider-neutral intent interpretation, strict output validation, deterministic fallback, and evals.
+- `packages/ai`: provider-neutral intent interpretation and property Q&A, strict output validation, deterministic fallback, and evals.
 - `infra/postgres`: canonical data model with pgvector enabled.
 
 ## Run locally
@@ -46,11 +46,11 @@ docker compose config --quiet
 
 ## MVP implementation sequence
 
-1. Mobile search, opportunity detail, saved state, monitor, and alert UI.
-2. Basic comparison and property Q&A.
+1. Mobile search, opportunity detail, saved state, monitor, and alert UI. Implemented.
+2. Basic comparison and property Q&A. Implemented.
 3. First authorized production inventory feed and media pipeline.
 4. Email/push adapters.
-5. Operator claim and listing-management flow.
+5. Operator claim and listing-management flow. Implemented.
 6. Product analytics, observability, security hardening, and load tests.
 
 ## Architecture rule

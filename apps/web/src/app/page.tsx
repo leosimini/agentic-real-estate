@@ -27,10 +27,11 @@ import {
   Play,
   Search,
   ShieldCheck,
+  Scale,
   Sparkles,
   X
 } from 'lucide-react';
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ApiError,
   api,
@@ -45,6 +46,7 @@ import {
   type OpportunityDetail,
   type Operation,
   type OperatorProfile,
+  type PropertyAnswer,
   type SearchCriteria
 } from '../lib/api';
 
@@ -86,6 +88,41 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Algo salió mal. Probá de nuevo.';
 }
 
+function useDialogFocus<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!dialog) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const selector = 'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const focusable = () => Array.from(dialog.querySelectorAll<HTMLElement>(selector));
+    (dialog.querySelector<HTMLElement>('[autofocus]') ?? focusable()[0])?.focus();
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      if (!items.length) {
+        event.preventDefault();
+        return;
+      }
+      const first = items[0]!;
+      const last = items[items.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    dialog.addEventListener('keydown', trapFocus);
+    return () => {
+      dialog.removeEventListener('keydown', trapFocus);
+      previous?.focus();
+    };
+  }, []);
+  return ref;
+}
+
 export default function Home() {
   const [activeTab, setActiveTab] = useState<Tab>('discover');
   const [mobileMenu, setMobileMenu] = useState(false);
@@ -102,6 +139,8 @@ export default function Home() {
   const [operatorProfile, setOperatorProfile] = useState<OperatorProfile | null>(null);
   const [managedPublications, setManagedPublications] = useState<ManagedPublication[]>([]);
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
+  const [comparisonIds, setComparisonIds] = useState<string[]>([]);
+  const [comparisonOpen, setComparisonOpen] = useState(false);
   const [detail, setDetail] = useState<OpportunityDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
@@ -164,12 +203,13 @@ export default function Home() {
   }, []); // Initial hydration only.
 
   useEffect(() => {
-    if (!detail && !authOpen) return;
+    if (!detail && !authOpen && !comparisonOpen) return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       if (authOpen) setAuthOpen(false);
+      else if (comparisonOpen) setComparisonOpen(false);
       else setDetail(null);
     };
     window.addEventListener('keydown', closeOnEscape);
@@ -177,10 +217,15 @@ export default function Home() {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', closeOnEscape);
     };
-  }, [authOpen, detail]);
+  }, [authOpen, comparisonOpen, detail]);
 
   const savedIds = useMemo(() => new Set(saved.map((item) => item.id)), [saved]);
   const unreadAlerts = alerts.filter((alert) => !alert.readAt).length;
+  const comparisonItems = useMemo(() => {
+    const all = new Map([...opportunities, ...saved].map((item) => [item.id, item]));
+    return comparisonIds.map((id) => all.get(id)).filter((item): item is Opportunity => Boolean(item));
+  }, [comparisonIds, opportunities, saved]);
+  const modalOpen = Boolean(detail || authOpen || comparisonOpen);
 
   function selectTab(tab: Tab) {
     setActiveTab(tab);
@@ -224,6 +269,17 @@ export default function Home() {
     } catch (error) {
       setNotice(errorMessage(error));
     }
+  }
+
+  function toggleComparison(item: Opportunity) {
+    setComparisonIds((current) => {
+      if (current.includes(item.id)) return current.filter((id) => id !== item.id);
+      if (current.length >= 3) {
+        setNotice('Podés comparar hasta tres oportunidades a la vez.');
+        return current;
+      }
+      return [...current, item.id];
+    });
   }
 
   async function dismiss(item: Opportunity) {
@@ -377,7 +433,8 @@ export default function Home() {
 
   return (
     <div className="appFrame">
-      <aside className="sideRail" aria-label="Navegación principal">
+      <a className="skipLink" href="#main-content">Saltar al contenido principal</a>
+      <aside className="sideRail" aria-label="Navegación principal" aria-hidden={modalOpen} inert={modalOpen}>
         <Brand />
         <NavItems active={activeTab} unread={unreadAlerts} onSelect={selectTab} />
         <button className="accountSummary" onClick={() => token ? setActiveTab('profile') : setAuthOpen(true)}>
@@ -387,12 +444,12 @@ export default function Home() {
         </button>
       </aside>
 
-      <main className="mainContent">
+      <main className="mainContent" id="main-content" tabIndex={-1} aria-hidden={modalOpen} inert={modalOpen}>
         <header className="mobileHeader">
           <Brand />
-          <button className="iconButton" aria-label="Abrir menú" onClick={() => setMobileMenu(!mobileMenu)}><Menu /></button>
+          <button className="iconButton" aria-label={mobileMenu ? 'Cerrar menú' : 'Abrir menú'} aria-expanded={mobileMenu} aria-controls="mobile-menu" onClick={() => setMobileMenu(!mobileMenu)}><Menu /></button>
         </header>
-        {mobileMenu && <div className="mobileMenu"><NavItems active={activeTab} unread={unreadAlerts} onSelect={selectTab} /></div>}
+        {mobileMenu && <div className="mobileMenu" id="mobile-menu"><NavItems active={activeTab} unread={unreadAlerts} onSelect={selectTab} /></div>}
 
         {notice && <div className="notice" role="status"><span>{notice}</span><button aria-label="Cerrar mensaje" onClick={() => setNotice(null)}><X size={17} /></button></div>}
 
@@ -415,14 +472,16 @@ export default function Home() {
           onOpen={openDetail}
           onSave={toggleSaved}
           onDismiss={dismiss}
+          comparisonIds={new Set(comparisonIds)}
+          onCompare={toggleComparison}
         />}
         {activeTab === 'monitors' && <Monitors monitors={monitors} alerts={alerts} authenticated={Boolean(token)} onToggle={toggleMonitor} onRead={markRead} onDiscover={() => setActiveTab('discover')} />}
         {activeTab === 'publish' && <Publish token={token} onNeedAuth={() => setAuthOpen(true)} onNotice={setNotice} />}
-        {activeTab === 'saved' && <Saved items={saved} authenticated={Boolean(token)} onOpen={openDetail} onRemove={toggleSaved} onDiscover={() => setActiveTab('discover')} />}
+        {activeTab === 'saved' && <Saved items={saved} authenticated={Boolean(token)} comparisonIds={new Set(comparisonIds)} onOpen={openDetail} onRemove={toggleSaved} onCompare={toggleComparison} onDiscover={() => setActiveTab('discover')} />}
         {activeTab === 'profile' && <Profile user={user} operatorProfile={operatorProfile} publications={managedPublications} inquiries={inquiries} onLogin={() => setAuthOpen(true)} onLogout={logout} onCreateOperator={createOperatorProfile} onUpdatePublication={updateManagedPublication} />}
       </main>
 
-      <nav className="bottomNav" aria-label="Navegación principal">
+      <nav className="bottomNav" aria-label="Navegación principal" aria-hidden={modalOpen} inert={modalOpen}>
         <NavButton tab="discover" label="Descubrir" icon={<Compass />} active={activeTab} onSelect={selectTab} />
         <NavButton tab="monitors" label="Monitores" icon={<Bell />} badge={unreadAlerts} active={activeTab} onSelect={selectTab} />
         <NavButton tab="publish" label="Publicar" icon={<FilePlus2 />} active={activeTab} onSelect={selectTab} featured />
@@ -430,7 +489,10 @@ export default function Home() {
         <NavButton tab="profile" label="Vos" icon={<CircleUserRound />} active={activeTab} onSelect={selectTab} />
       </nav>
 
-      {detail && <DetailPanel detail={detail} isSaved={savedIds.has(detail.opportunity.id)} operatorProfile={operatorProfile} authenticated={Boolean(token)} onClose={() => setDetail(null)} onSave={() => toggleSaved(detail.opportunity)} onInquiry={sendInquiry} onClaim={claimPublication} onNeedAuth={() => setAuthOpen(true)} />}
+      {comparisonIds.length > 0 && <div className="comparisonTray" role="status" aria-hidden={modalOpen} inert={modalOpen}><span><Scale size={17} /> {comparisonIds.length} de 3 para comparar</span><div><button className="quietButton" onClick={() => setComparisonIds([])}>Limpiar</button><button className="primaryButton" disabled={comparisonItems.length < 2} onClick={() => setComparisonOpen(true)}>Comparar</button></div></div>}
+
+      {detail && <DetailPanel detail={detail} isSaved={savedIds.has(detail.opportunity.id)} operatorProfile={operatorProfile} authenticated={Boolean(token)} onClose={() => setDetail(null)} onSave={() => toggleSaved(detail.opportunity)} onInquiry={sendInquiry} onClaim={claimPublication} onNeedAuth={() => { setDetail(null); setAuthOpen(true); }} />}
+      {comparisonOpen && <ComparisonPanel items={comparisonItems} criteria={criteria} onClose={() => setComparisonOpen(false)} onRemove={(id) => setComparisonIds((current) => current.filter((item) => item !== id))} />}
       {authOpen && <AuthPanel mode={authMode} setMode={setAuthMode} onClose={() => setAuthOpen(false)} onAuthenticated={onAuthenticated} />}
     </div>
   );
@@ -447,7 +509,7 @@ function NavItems({ active, unread, onSelect }: { active: Tab; unread: number; o
     { tab: 'saved', label: 'Guardados', icon: <Bookmark /> },
     { tab: 'publish', label: 'Publicar', icon: <FilePlus2 /> }
   ];
-  return <div className="navItems">{items.map((item) => <button key={item.tab} className={active === item.tab ? 'active' : ''} onClick={() => onSelect(item.tab)}>{item.icon}<span>{item.label}</span>{Boolean(item.badge) && <b>{item.badge}</b>}</button>)}</div>;
+  return <div className="navItems">{items.map((item) => <button key={item.tab} className={active === item.tab ? 'active' : ''} aria-current={active === item.tab ? 'page' : undefined} onClick={() => onSelect(item.tab)}>{item.icon}<span>{item.label}</span>{Boolean(item.badge) && <b>{item.badge}</b>}</button>)}</div>;
 }
 
 function NavButton({ tab, label, icon, badge, active, onSelect, featured = false }: { tab: Tab; label: string; icon: React.ReactNode; badge?: number; active: Tab; onSelect: (tab: Tab) => void; featured?: boolean }) {
@@ -467,12 +529,14 @@ type DiscoverProps = {
   opportunities: Opportunity[];
   loading: boolean;
   savedIds: Set<string>;
+  comparisonIds: Set<string>;
   onInterpret: (event: FormEvent) => void | Promise<void>;
   onApply: () => void;
   onCreateMonitor: () => void;
   onOpen: (id: string) => void;
   onSave: (item: Opportunity) => void;
   onDismiss: (item: Opportunity) => void;
+  onCompare: (item: Opportunity) => void;
 };
 
 function Discover(props: DiscoverProps) {
@@ -524,8 +588,8 @@ function Discover(props: DiscoverProps) {
     </section>
 
     <section className="resultsSection">
-      <div className="sectionHeading"><div><span className="sectionKicker">Selección actual</span><h2>Oportunidades, no duplicados</h2></div><span className="resultCount">{props.loading ? 'Buscando…' : `${props.opportunities.length} encontradas`}</span></div>
-      {props.loading ? <LoadingState /> : props.opportunities.length ? <div className="opportunityGrid">{props.opportunities.map((item, index) => <OpportunityCard key={item.id} item={item} index={index} saved={props.savedIds.has(item.id)} onOpen={props.onOpen} onSave={props.onSave} onDismiss={props.onDismiss} />)}</div> : <EmptyState icon={<Search />} title="Todavía no encontramos coincidencias" body="Probá ampliando la zona o el presupuesto. Si activás un monitor, seguimos buscando por vos." action="Revisar criterios" onAction={() => props.setCriteriaOpen(true)} />}
+      <div className="sectionHeading"><div><span className="sectionKicker">Selección actual</span><h2>Oportunidades, no duplicados</h2></div><span className="resultCount" role="status" aria-live="polite">{props.loading ? 'Buscando…' : `${props.opportunities.length} encontradas`}</span></div>
+      {props.loading ? <LoadingState /> : props.opportunities.length ? <div className="opportunityGrid">{props.opportunities.map((item, index) => <OpportunityCard key={item.id} item={item} index={index} saved={props.savedIds.has(item.id)} compared={props.comparisonIds.has(item.id)} onOpen={props.onOpen} onSave={props.onSave} onDismiss={props.onDismiss} onCompare={props.onCompare} />)}</div> : <EmptyState icon={<Search />} title="Todavía no encontramos coincidencias" body="Probá ampliando la zona o el presupuesto. Si activás un monitor, seguimos buscando por vos." action="Revisar criterios" onAction={() => props.setCriteriaOpen(true)} />}
     </section>
   </>;
 }
@@ -548,7 +612,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <label className="field"><span>{label}</span>{children}</label>;
 }
 
-function OpportunityCard({ item, index, saved, onOpen, onSave, onDismiss }: { item: Opportunity; index: number; saved: boolean; onOpen: (id: string) => void; onSave: (item: Opportunity) => void; onDismiss: (item: Opportunity) => void }) {
+function OpportunityCard({ item, index, saved, compared, onOpen, onSave, onDismiss, onCompare }: { item: Opportunity; index: number; saved: boolean; compared: boolean; onOpen: (id: string) => void; onSave: (item: Opportunity) => void; onDismiss: (item: Opportunity) => void; onCompare: (item: Opportunity) => void }) {
   return <article className="opportunityCard">
     <button className={`propertyMedia mediaTone${index % 4}`} onClick={() => onOpen(item.id)} aria-label={`Ver ${item.title}`}>
       <span className="mediaIndex">{String(index + 1).padStart(2, '0')}</span><Building2 size={44} strokeWidth={1.25} /><span>Fotos en la publicación de origen</span>
@@ -558,7 +622,7 @@ function OpportunityCard({ item, index, saved, onOpen, onSave, onDismiss }: { it
       <button className="cardTitle" onClick={() => onOpen(item.id)}><strong>{formatMoney(item.price, item.currency)}</strong><span>{item.address ?? item.title}</span></button>
       <div className="facts"><span>{item.rooms ?? '—'} amb.</span><span>{item.areaTotalM2 ?? '—'} m²</span><span>{item.publicationCount} {item.publicationCount === 1 ? 'publicación' : 'publicaciones'}</span></div>
       <div className="signalLine"><ArrowDownRight size={17} /><span>{item.publicationCount > 1 ? 'Comparamos todas las publicaciones de esta propiedad.' : 'Una fuente activa con trazabilidad visible.'}</span></div>
-      <div className="cardActions"><button onClick={() => onOpen(item.id)}>Ver evidencia <ChevronRight size={16} /></button><button onClick={() => onDismiss(item)}><EyeOff size={16} /> Descartar</button></div>
+      <div className="cardActions"><button onClick={() => onOpen(item.id)}>Ver evidencia <ChevronRight size={16} /></button><button onClick={() => onCompare(item)} aria-pressed={compared}><Scale size={16} /> {compared ? 'Comparando' : 'Comparar'}</button><button onClick={() => onDismiss(item)}><EyeOff size={16} /> Descartar</button></div>
     </div>
   </article>;
 }
@@ -574,9 +638,9 @@ function Monitors({ monitors, alerts, authenticated, onToggle, onRead, onDiscove
   </section>;
 }
 
-function Saved({ items, authenticated, onOpen, onRemove, onDiscover }: { items: Opportunity[]; authenticated: boolean; onOpen: (id: string) => void; onRemove: (item: Opportunity) => void; onDiscover: () => void }) {
+function Saved({ items, authenticated, comparisonIds, onOpen, onRemove, onCompare, onDiscover }: { items: Opportunity[]; authenticated: boolean; comparisonIds: Set<string>; onOpen: (id: string) => void; onRemove: (item: Opportunity) => void; onCompare: (item: Opportunity) => void; onDiscover: () => void }) {
   if (!authenticated) return <EmptyState icon={<LogIn />} title="Guardá una selección propia" body="Ingresá para comparar oportunidades sin volver a buscarlas." />;
-  return <section className="pageSection"><PageHeading kicker="Tu preselección" title="Guardados" body="Un espacio corto para decidir mejor, no otra lista interminable." />{items.length ? <div className="savedList">{items.map((item, index) => <OpportunityCard key={item.id} item={item} index={index} saved onOpen={onOpen} onSave={onRemove} onDismiss={() => undefined} />)}</div> : <EmptyState icon={<Bookmark />} title="Tu selección está vacía" body="Guardá las propiedades que quieras revisar con más calma." action="Ir a descubrir" onAction={onDiscover} />}</section>;
+  return <section className="pageSection"><PageHeading kicker="Tu preselección" title="Guardados" body="Un espacio corto para decidir mejor, no otra lista interminable." />{items.length ? <div className="savedList">{items.map((item, index) => <OpportunityCard key={item.id} item={item} index={index} saved compared={comparisonIds.has(item.id)} onOpen={onOpen} onSave={onRemove} onDismiss={() => undefined} onCompare={onCompare} />)}</div> : <EmptyState icon={<Bookmark />} title="Tu selección está vacía" body="Guardá las propiedades que quieras revisar con más calma." action="Ir a descubrir" onAction={onDiscover} />}</section>;
 }
 
 function Publish({ token, onNeedAuth, onNotice }: { token: string | null; onNeedAuth: () => void; onNotice: (message: string) => void }) {
@@ -660,8 +724,27 @@ type DetailPanelProps = {
 };
 
 function DetailPanel({ detail, isSaved, operatorProfile, authenticated, onClose, onSave, onInquiry, onClaim, onNeedAuth }: DetailPanelProps) {
+  const dialogRef = useDialogFocus<HTMLElement>();
   const [inquiryFor, setInquiryFor] = useState<string | null>(null);
+  const [answer, setAnswer] = useState<PropertyAnswer | null>(null);
+  const [asking, setAsking] = useState(false);
   const item = detail.opportunity;
+  async function askProperty(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    setAsking(true);
+    try {
+      setAnswer(await api<PropertyAnswer>(`/v1/opportunities/${item.id}/questions`, {
+        method: 'POST', body: JSON.stringify({ question: data.get('question') })
+      }));
+    } catch (error) {
+      setAnswer({
+        answer: errorMessage(error), evidence: [], caveats: [], provider: 'deterministic', promptVersion: 'error'
+      });
+    } finally {
+      setAsking(false);
+    }
+  }
   function startInquiry(publicationId: string) {
     if (!authenticated) return onNeedAuth();
     setInquiryFor(publicationId);
@@ -673,10 +756,20 @@ function DetailPanel({ detail, isSaved, operatorProfile, authenticated, onClose,
     onInquiry(inquiryFor, String(data.get('message') ?? ''));
     setInquiryFor(null);
   }
-  return <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section className="detailPanel" role="dialog" aria-modal="true" aria-labelledby="detail-title"><div className="panelHeader"><span>Oportunidad canónica</span><button className="iconButton" onClick={onClose} aria-label="Cerrar detalle" autoFocus><X /></button></div><div className="detailMedia"><Building2 size={58} strokeWidth={1.1} /><span>Consultá las fotos en cada publicación de origen</span></div><div className="detailContent"><div className="detailLead"><div><span className="freshness"><Clock3 size={14} />{freshnessLabel(item.freshness)}</span><h2 id="detail-title">{formatMoney(item.price, item.currency)}</h2><p>{item.address}</p></div><button className={`saveButton ${isSaved ? 'saved' : ''}`} onClick={onSave} aria-label={isSaved ? 'Quitar de guardados' : 'Guardar oportunidad'}><Heart fill={isSaved ? 'currentColor' : 'none'} /><span>{isSaved ? 'Guardada' : 'Guardar'}</span></button></div><div className="detailFacts"><span><strong>{item.rooms ?? '—'}</strong> ambientes</span><span><strong>{item.areaTotalM2 ?? '—'}</strong> m² totales</span><span><strong>{item.publicationCount}</strong> fuentes</span></div><section className="evidenceBlock"><span className="sectionKicker">Por qué verla</span><h3>Una sola propiedad, toda la evidencia</h3><p>Consolidamos las publicaciones vinculadas sin ocultar quién publicó, cuándo se verificó ni qué precio informa cada fuente.</p></section><section><div className="sectionHeading compact"><div><span className="sectionKicker">Proveniencia</span><h3>Publicaciones de origen</h3></div></div><div className="sourceList">{detail.publications.map((publication) => <article className="sourceCard" key={publication.id}><a href={publication.sourceUrl} target="_blank" rel="noreferrer"><span className="sourceIcon"><Building2 size={18} /></span><span><strong>{publication.sourceName}</strong><small>{publication.publisherName ?? (publication.publisherType === 'owner' ? 'Dueño directo' : 'Publicación agregada')} · {formatMoney(publication.price, publication.currency)}</small></span><span className={`sourceStatus ${publication.status}`}>{publication.status === 'active' ? 'Activa' : 'Revisar'}</span><ChevronRight size={17} /></a>{publication.status === 'active' && publication.publisherType !== 'aggregated' && <button className="sourceAction" onClick={() => startInquiry(publication.id)}><MessageCircle size={16} /> Consultar a esta fuente</button>}{publication.publisherType === 'aggregated' && operatorProfile?.verificationStatus === 'verified' && <button className="sourceAction" onClick={() => onClaim(publication.id)}><BadgeCheck size={16} /> Solicitar representación</button>}</article>)}</div>{inquiryFor && <form className="inquiryComposer" onSubmit={submitInquiry}><Field label="Tu consulta"><textarea name="message" required minLength={10} maxLength={4000} rows={3} autoFocus placeholder="Quisiera conocer disponibilidad y coordinar una visita." /></Field><div><button type="button" className="quietButton" onClick={() => setInquiryFor(null)}>Cancelar</button><button className="primaryButton">Enviar consulta</button></div></form>}</section></div></section></div>;
+  return <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section ref={dialogRef} className="detailPanel" role="dialog" aria-modal="true" aria-labelledby="detail-title"><div className="panelHeader"><span>Oportunidad canónica</span><button className="iconButton" onClick={onClose} aria-label="Cerrar detalle" autoFocus><X /></button></div><div className="detailMedia"><Building2 size={58} strokeWidth={1.1} /><span>Consultá las fotos en cada publicación de origen</span></div><div className="detailContent"><div className="detailLead"><div><span className="freshness"><Clock3 size={14} />{freshnessLabel(item.freshness)}</span><h2 id="detail-title">{formatMoney(item.price, item.currency)}</h2><p>{item.address}</p></div><button className={`saveButton ${isSaved ? 'saved' : ''}`} onClick={onSave} aria-label={isSaved ? 'Quitar de guardados' : 'Guardar oportunidad'}><Heart fill={isSaved ? 'currentColor' : 'none'} /><span>{isSaved ? 'Guardada' : 'Guardar'}</span></button></div><div className="detailFacts"><span><strong>{item.rooms ?? '—'}</strong> ambientes</span><span><strong>{item.areaTotalM2 ?? '—'}</strong> m² totales</span><span><strong>{item.publicationCount}</strong> fuentes</span></div><section className="evidenceBlock"><span className="sectionKicker">Por qué verla</span><h3>Una sola propiedad, toda la evidencia</h3><p>Consolidamos las publicaciones vinculadas sin ocultar quién publicó, cuándo se verificó ni qué precio informa cada fuente.</p></section><section className="assistantBlock"><span className="sectionKicker"><Sparkles size={15} /> Preguntale a la ficha</span><h3>Una respuesta con evidencia</h3><form onSubmit={askProperty}><input name="question" aria-label="Pregunta sobre la propiedad" required minLength={3} maxLength={1000} placeholder="Ej. ¿Cuál es el precio por m²?" /><button className="primaryButton" disabled={asking}>{asking ? <LoaderCircle className="spin" /> : <MessageCircle />}{asking ? 'Revisando…' : 'Preguntar'}</button></form>{answer && <div className="assistantAnswer" role="status"><p>{answer.answer}</p>{answer.evidence.length > 0 && <dl>{answer.evidence.map((fact) => <div key={`${fact.label}-${fact.value}`}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl>}{answer.caveats.map((caveat) => <small key={caveat}>{caveat}</small>)}</div>}</section><section><div className="sectionHeading compact"><div><span className="sectionKicker">Proveniencia</span><h3>Publicaciones de origen</h3></div></div><div className="sourceList">{detail.publications.map((publication) => <article className="sourceCard" key={publication.id}><a href={publication.sourceUrl} target="_blank" rel="noreferrer"><span className="sourceIcon"><Building2 size={18} /></span><span><strong>{publication.sourceName}</strong><small>{publication.publisherName ?? (publication.publisherType === 'owner' ? 'Dueño directo' : 'Publicación agregada')} · {formatMoney(publication.price, publication.currency)}</small></span><span className={`sourceStatus ${publication.status}`}>{publication.status === 'active' ? 'Activa' : 'Revisar'}</span><ChevronRight size={17} /></a>{publication.status === 'active' && publication.publisherType !== 'aggregated' && <button className="sourceAction" onClick={() => startInquiry(publication.id)}><MessageCircle size={16} /> Consultar a esta fuente</button>}{publication.publisherType === 'aggregated' && operatorProfile?.verificationStatus === 'verified' && <button className="sourceAction" onClick={() => onClaim(publication.id)}><BadgeCheck size={16} /> Solicitar representación</button>}</article>)}</div>{inquiryFor && <form className="inquiryComposer" onSubmit={submitInquiry}><Field label="Tu consulta"><textarea name="message" required minLength={10} maxLength={4000} rows={3} autoFocus placeholder="Quisiera conocer disponibilidad y coordinar una visita." /></Field><div><button type="button" className="quietButton" onClick={() => setInquiryFor(null)}>Cancelar</button><button className="primaryButton">Enviar consulta</button></div></form>}</section></div></section></div>;
+}
+
+function ComparisonPanel({ items, criteria, onClose, onRemove }: { items: Opportunity[]; criteria: SearchCriteria; onClose: () => void; onRemove: (id: string) => void }) {
+  const dialogRef = useDialogFocus<HTMLElement>();
+  return <div className="overlay comparisonOverlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section ref={dialogRef} className="comparisonPanel" role="dialog" aria-modal="true" aria-labelledby="comparison-title"><div className="panelHeader"><span>Comparación objetiva</span><button className="iconButton" onClick={onClose} aria-label="Cerrar comparación" autoFocus><X /></button></div><div className="comparisonContent"><span className="sectionKicker"><Scale size={15} /> Decidir con contexto</span><h2 id="comparison-title">Tus oportunidades, lado a lado</h2><p>Comparamos la ficha canónica. Lo que no está respaldado por una fuente queda sin afirmar.</p><div className="comparisonGrid">{items.map((item) => <article key={item.id}><button className="removeComparison" aria-label={`Quitar ${item.title} de la comparación`} onClick={() => onRemove(item.id)}><X size={16} /></button><h3>{formatMoney(item.price, item.currency)}</h3><p>{item.address ?? item.title}</p><dl><ComparisonFact label="Ambientes" value={item.rooms === null ? 'Sin dato' : String(item.rooms)} /><ComparisonFact label="Superficie" value={item.areaTotalM2 === null ? 'Sin dato' : `${item.areaTotalM2} m²`} /><ComparisonFact label="Precio por m²" value={item.price !== null && item.areaTotalM2 ? formatMoney(Math.round(item.price / item.areaTotalM2), item.currency) : 'Sin dato'} /><ComparisonFact label="Fuentes" value={String(item.publicationCount)} /><ComparisonFact label="Presupuesto" value={criteria.maxPrice === undefined || item.price === null ? 'Sin comparar' : item.price <= criteria.maxPrice ? 'Dentro del máximo' : 'Supera el máximo'} /><ComparisonFact label="Frescura" value={freshnessLabel(item.freshness)} /></dl></article>)}</div><div className="comparisonCaveat"><ShieldCheck size={18} /><span>Ruido, luz, estado y gastos requieren evidencia de la publicación o una visita. Umbral no los completa por su cuenta.</span></div></div></section></div>;
+}
+
+function ComparisonFact({ label, value }: { label: string; value: string }) {
+  return <div><dt>{label}</dt><dd>{value}</dd></div>;
 }
 
 function AuthPanel({ mode, setMode, onClose, onAuthenticated }: { mode: 'login' | 'register'; setMode: (mode: 'login' | 'register') => void; onClose: () => void; onAuthenticated: (token: string, user: User) => void }) {
+  const dialogRef = useDialogFocus<HTMLElement>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -687,7 +780,7 @@ function AuthPanel({ mode, setMode, onClose, onAuthenticated }: { mode: 'login' 
       onAuthenticated(result.token, result.user);
     } catch (caught) { setError(errorMessage(caught)); } finally { setBusy(false); }
   }
-  return <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section className="authPanel" role="dialog" aria-modal="true" aria-labelledby="auth-title"><div className="panelHeader"><Brand /><button className="iconButton" onClick={onClose} aria-label="Cerrar" autoFocus><X /></button></div><div className="authCopy"><span className="sectionKicker">Tu búsqueda, siempre disponible</span><h2 id="auth-title">{mode === 'register' ? 'Creá tu espacio' : 'Volvé a tu espacio'}</h2><p>Guardá oportunidades, activá monitores y recibí cambios importantes sin perder el hilo.</p></div><form onSubmit={submit}>{mode === 'register' && <Field label="Nombre"><input name="displayName" minLength={2} autoComplete="name" placeholder="Cómo querés que te llamemos" /></Field>}<Field label="Email"><input name="email" type="email" required autoComplete="email" placeholder="vos@ejemplo.com" /></Field><Field label="Contraseña"><input name="password" type="password" required minLength={mode === 'register' ? 10 : 1} autoComplete={mode === 'register' ? 'new-password' : 'current-password'} placeholder={mode === 'register' ? 'Mínimo 10 caracteres' : 'Tu contraseña'} /></Field>{error && <p className="formError" role="alert">{error}</p>}<button className="primaryButton submitButton" disabled={busy}>{busy ? <><LoaderCircle className="spin" /> Un momento…</> : mode === 'register' ? 'Crear cuenta' : 'Ingresar'}</button></form><button className="modeSwitch" onClick={() => setMode(mode === 'register' ? 'login' : 'register')}>{mode === 'register' ? '¿Ya tenés cuenta? Ingresá' : '¿Primera vez? Creá tu cuenta'}</button></section></div>;
+  return <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section ref={dialogRef} className="authPanel" role="dialog" aria-modal="true" aria-labelledby="auth-title"><div className="panelHeader"><Brand /><button className="iconButton" onClick={onClose} aria-label="Cerrar" autoFocus><X /></button></div><div className="authCopy"><span className="sectionKicker">Tu búsqueda, siempre disponible</span><h2 id="auth-title">{mode === 'register' ? 'Creá tu espacio' : 'Volvé a tu espacio'}</h2><p>Guardá oportunidades, activá monitores y recibí cambios importantes sin perder el hilo.</p></div><form onSubmit={submit}>{mode === 'register' && <Field label="Nombre"><input name="displayName" minLength={2} autoComplete="name" placeholder="Cómo querés que te llamemos" /></Field>}<Field label="Email"><input name="email" type="email" required autoComplete="email" placeholder="vos@ejemplo.com" /></Field><Field label="Contraseña"><input name="password" type="password" required minLength={mode === 'register' ? 10 : 1} autoComplete={mode === 'register' ? 'new-password' : 'current-password'} placeholder={mode === 'register' ? 'Mínimo 10 caracteres' : 'Tu contraseña'} /></Field>{error && <p className="formError" role="alert">{error}</p>}<button className="primaryButton submitButton" disabled={busy}>{busy ? <><LoaderCircle className="spin" /> Un momento…</> : mode === 'register' ? 'Crear cuenta' : 'Ingresar'}</button></form><button className="modeSwitch" onClick={() => setMode(mode === 'register' ? 'login' : 'register')}>{mode === 'register' ? '¿Ya tenés cuenta? Ingresá' : '¿Primera vez? Creá tu cuenta'}</button></section></div>;
 }
 
 function PageHeading({ kicker, title, body, action }: { kicker: string; title: string; body: string; action?: React.ReactNode }) {

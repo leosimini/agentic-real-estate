@@ -26,6 +26,7 @@ export type ResilientInterpreterOptions = {
 };
 
 const interpretationInputSchema = z.string().trim().min(5).max(2000);
+export const INTENT_PROMPT_VERSION = 'intent-es-ar-v1';
 
 const structuredInterpretationSchema = z.object({
   operation: z.enum(['sale', 'rent']).nullable(),
@@ -198,6 +199,7 @@ export class DeterministicIntentInterpreter implements IntentInterpreter {
       assumptions,
       evidence,
       provider: 'deterministic',
+      promptVersion: INTENT_PROMPT_VERSION,
       requiresConfirmation: true
     });
   }
@@ -292,6 +294,7 @@ export class OpenAIIntentInterpreter implements IntentInterpreter {
       provider: 'openai',
       model: this.#model,
       requestId,
+      promptVersion: INTENT_PROMPT_VERSION,
       requiresConfirmation: true
     });
   }

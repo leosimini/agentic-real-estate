@@ -23,7 +23,19 @@ export type IntentInterpretation = {
   model?: string;
   requestId?: string;
   fallbackReason?: 'provider_unavailable' | 'provider_invalid_response';
+  promptVersion: string;
   requiresConfirmation: true;
+};
+
+export type PropertyAnswer = {
+  answer: string;
+  evidence: Array<{ label: string; value: string; source: 'canonical_property' | 'source_publication' }>;
+  caveats: string[];
+  provider: 'deterministic' | 'openai';
+  model?: string;
+  requestId?: string;
+  fallbackReason?: 'provider_unavailable' | 'provider_invalid_response';
+  promptVersion: string;
 };
 
 export type Opportunity = {

@@ -5,8 +5,11 @@ import rateLimit from '@fastify/rate-limit';
 import { z } from 'zod';
 import {
   createResilientIntentInterpreter,
+  createResilientPropertyAssistant,
   DeterministicIntentInterpreter,
-  OpenAIIntentInterpreter
+  DeterministicPropertyAssistant,
+  OpenAIIntentInterpreter,
+  OpenAIPropertyAssistant
 } from '@realty/ai';
 import {
   alertDtoSchema,
@@ -46,6 +49,9 @@ const loginInputSchema = z.object({
 }).strict();
 const intentInputSchema = z.object({
   intent: z.string().trim().min(5).max(2000)
+}).strict();
+const propertyQuestionSchema = z.object({
+  question: z.string().trim().min(3).max(1000)
 }).strict();
 
 const monitorInputSchema = z.object({
@@ -241,6 +247,17 @@ export async function buildApp(config: ApiConfig = loadApiConfig()): Promise<Fas
     fallback: new DeterministicIntentInterpreter(),
     onFallback: ({ reason, error }) => {
       app.log.warn({ reason, err: error }, 'AI intent provider unavailable; deterministic interpretation used');
+    }
+  });
+  const propertyAssistant = createResilientPropertyAssistant({
+    primary: config.aiProvider === 'openai'
+      ? new OpenAIPropertyAssistant({
+          apiKey: config.openAiApiKey!, model: config.openAiModel, timeoutMs: config.aiTimeoutMs
+        })
+      : undefined,
+    fallback: new DeterministicPropertyAssistant(),
+    onFallback: ({ reason, error }) => {
+      app.log.warn({ reason, err: error }, 'AI property assistant unavailable; deterministic answer used');
     }
   });
 
@@ -468,6 +485,55 @@ export async function buildApp(config: ApiConfig = loadApiConfig()): Promise<Fas
         payload: event.payload
       }))
     };
+  });
+
+  app.post('/v1/opportunities/:id/questions', {
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } }
+  }, async (request, reply) => {
+    const params = opportunityParamsSchema.safeParse(request.params);
+    const input = propertyQuestionSchema.safeParse(request.body);
+    if (!params.success || !input.success) {
+      return reply.code(400).send({ error: { code: 'invalid_request', details: input.success ? undefined : input.error.flatten() } });
+    }
+    const propertyResult = await query<OpportunityRow>(`
+      SELECT p.id, p.canonical_address AS address, p.operation, p.canonical_price AS price,
+        p.currency, p.area_total_m2, p.bedrooms, p.rooms, p.floor, p.status, p.updated_at,
+        GREATEST(p.last_verified_at, MAX(pub.last_verified_at)) AS last_verified_at,
+        COUNT(pub.id) FILTER (WHERE pub.publication_status='active')::int AS publication_count
+      FROM property p LEFT JOIN publication pub ON pub.property_id=p.id
+      WHERE p.id=$1 GROUP BY p.id
+    `, [params.data.id]);
+    const property = propertyResult.rows[0];
+    if (!property) return reply.code(404).send({ error: { code: 'not_found', message: 'Opportunity was not found' } });
+    const publications = await query<PublicationRow>(`
+      SELECT pub.id, pub.property_id, pub.source_listing_id, pub.source_url, pub.publisher_type,
+        pub.publisher_name, pub.title, pub.description, pub.currency, pub.price,
+        pub.publication_status, pub.first_seen_at, pub.last_seen_at, pub.last_verified_at,
+        s.code AS source_code, s.name AS source_name
+      FROM publication pub JOIN source s ON s.id=pub.source_id
+      WHERE pub.property_id=$1 ORDER BY pub.last_verified_at DESC NULLS LAST
+    `, [property.id]);
+    const dto = opportunityDto(property);
+    return propertyAssistant.answer(input.data.question, {
+      id: property.id,
+      address: property.address,
+      price: dto.price,
+      currency: dto.currency,
+      areaTotalM2: dto.areaTotalM2,
+      rooms: dto.rooms,
+      bedrooms: dto.bedrooms ?? null,
+      floor: dto.floor ?? null,
+      freshness: dto.freshness ?? 'possibly_unavailable',
+      publications: publications.rows.map((publication) => ({
+        sourceName: publication.source_name,
+        publisherType: publication.publisher_type ?? 'aggregated',
+        publisherName: publication.publisher_name,
+        price: publication.price === null ? null : Number(publication.price),
+        currency: publication.currency,
+        status: publication.publication_status,
+        lastVerifiedAt: publication.last_verified_at?.toISOString() ?? null
+      }))
+    });
   });
 
   app.post('/v1/monitors', { preHandler: authenticate }, async (request, reply) => {

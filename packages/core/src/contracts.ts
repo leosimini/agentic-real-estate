@@ -117,6 +117,7 @@ export const intentInterpretationSchema = z.object({
   model: nonEmptyTextSchema.optional(),
   requestId: nonEmptyTextSchema.optional(),
   fallbackReason: z.enum(['provider_unavailable', 'provider_invalid_response']).optional(),
+  promptVersion: nonEmptyTextSchema,
   requiresConfirmation: z.literal(true)
 }).strict();
 export type IntentInterpretation = z.infer<typeof intentInterpretationSchema>;
@@ -241,3 +242,19 @@ export const inquiryDtoSchema = z.object({
   updatedAt: timestampSchema
 }).strict();
 export type InquiryDto = z.infer<typeof inquiryDtoSchema>;
+
+export const propertyAnswerSchema = z.object({
+  answer: nonEmptyTextSchema,
+  evidence: z.array(z.object({
+    label: nonEmptyTextSchema,
+    value: nonEmptyTextSchema,
+    source: z.enum(['canonical_property', 'source_publication'])
+  }).strict()).max(12),
+  caveats: z.array(nonEmptyTextSchema).max(8),
+  provider: z.enum(['deterministic', 'openai']),
+  model: nonEmptyTextSchema.optional(),
+  requestId: nonEmptyTextSchema.optional(),
+  fallbackReason: z.enum(['provider_unavailable', 'provider_invalid_response']).optional(),
+  promptVersion: nonEmptyTextSchema
+}).strict();
+export type PropertyAnswer = z.infer<typeof propertyAnswerSchema>;

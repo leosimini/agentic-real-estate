@@ -5,7 +5,7 @@
   --surface-strong: #ffffff;
   --ink: #18221d;
   --muted: #66706a;
-  --faint: #8b938e;
+  --faint: #59645e;
   --line: #d6d5ce;
   --line-strong: #b9bdb7;
   --spruce: #173f34;
@@ -27,6 +27,8 @@ button:disabled { cursor: wait; opacity: .65; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 
 .appFrame { min-height: 100vh; }
+.skipLink { position: fixed; top: 10px; left: 10px; z-index: 100; padding: 10px 13px; transform: translateY(-150%); background: var(--surface-strong); color: var(--spruce-dark); box-shadow: var(--shadow); font-weight: 750; }
+.skipLink:focus { transform: translateY(0); }
 .sideRail { position: fixed; inset: 0 auto 0 0; width: 244px; padding: 28px 18px 20px; border-right: 1px solid var(--line); background: rgba(242, 239, 232, .96); display: flex; flex-direction: column; z-index: 20; }
 .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--spruce-dark); font-family: Georgia, "Times New Roman", serif; font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
 .brandMark { width: 34px; height: 34px; display: grid; place-items: center; color: var(--surface); background: var(--spruce); border-radius: 9px 9px 14px 9px; }
@@ -118,7 +120,7 @@ h1, h2, h3, p { text-wrap: pretty; }
 .facts span + span::before { content: ""; position: absolute; left: -7px; top: 5px; width: 3px; height: 3px; border-radius: 50%; background: var(--line-strong); }
 .signalLine { margin-top: 17px; padding: 10px 0; border-top: 1px solid var(--line); display: flex; gap: 8px; color: var(--spruce); font-size: 12px; line-height: 1.4; }
 .signalLine svg { flex: none; }
-.cardActions { margin-top: auto; padding-top: 5px; display: flex; justify-content: space-between; gap: 8px; }
+.cardActions { margin-top: auto; padding-top: 5px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 12px; }
 .cardActions button { min-height: 39px; padding: 0; border: 0; background: transparent; color: var(--spruce); display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 750; }
 .cardActions button:last-child { color: var(--muted); }
 
@@ -208,6 +210,17 @@ h1, h2, h3, p { text-wrap: pretty; }
 .evidenceBlock { margin: 25px 0 34px; padding: 18px; border-left: 3px solid var(--clay); background: var(--clay-soft); }
 .evidenceBlock h3 { margin: 0; font-family: Georgia, serif; font-size: 23px; font-weight: 500; }
 .evidenceBlock p { margin: 7px 0 0; color: #68483d; line-height: 1.5; }
+.assistantBlock { margin: 0 0 32px; padding: 18px; border: 1px solid var(--line); background: var(--paper-deep); }
+.assistantBlock h3 { margin: 0; font-family: Georgia, serif; font-size: 23px; font-weight: 500; }
+.assistantBlock form { margin-top: 13px; display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.assistantBlock input { min-width: 0; min-height: 44px; padding: 10px 11px; border: 1px solid var(--line); background: var(--surface-strong); color: var(--ink); }
+.assistantAnswer { margin-top: 13px; padding: 14px; border-left: 3px solid var(--spruce); background: var(--surface); }
+.assistantAnswer > p { margin: 0; line-height: 1.5; }
+.assistantAnswer dl { margin: 12px 0 0; display: grid; gap: 7px; }
+.assistantAnswer dl div { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; }
+.assistantAnswer dt { color: var(--muted); }
+.assistantAnswer dd { margin: 0; text-align: right; font-weight: 700; }
+.assistantAnswer small { display: block; margin-top: 10px; color: var(--muted); line-height: 1.45; }
 .sectionHeading.compact { margin-bottom: 10px; }
 .sectionHeading.compact h3 { margin: 0; font-family: Georgia, serif; font-size: 22px; font-weight: 500; }
 .sourceList { display: grid; gap: 8px; }
@@ -223,6 +236,27 @@ h1, h2, h3, p { text-wrap: pretty; }
 .sourceAction { width: 100%; min-height: 42px; padding: 0 12px; border: 0; border-top: 1px solid var(--line); background: var(--paper-deep); color: var(--spruce); display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 12px; font-weight: 750; }
 .inquiryComposer { margin-top: 10px; padding: 14px; border: 1px solid var(--line); background: var(--paper-deep); }
 .inquiryComposer > div { margin-top: 10px; display: flex; justify-content: flex-end; gap: 8px; }
+
+.comparisonTray { position: fixed; left: calc(50% + 122px); bottom: 18px; z-index: 42; width: min(560px, calc(100vw - 292px)); padding: 10px 10px 10px 15px; transform: translateX(-50%); border: 1px solid rgba(255,255,255,.1); background: var(--spruce-dark); color: #fff; box-shadow: var(--shadow); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.comparisonTray > span { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 750; }
+.comparisonTray > div { display: flex; align-items: center; gap: 5px; }
+.comparisonTray .quietButton { color: #dbe7e1; }
+.comparisonTray .primaryButton { border-color: #fff; background: #fff; color: var(--spruce-dark); }
+.comparisonPanel { width: min(1040px, 100%); max-height: 100%; margin: auto; overflow: auto; background: var(--surface); box-shadow: var(--shadow); }
+.comparisonContent { padding: 28px; }
+.comparisonContent > h2 { margin: 0; font-family: Georgia, serif; font-size: clamp(32px, 5vw, 48px); font-weight: 500; letter-spacing: -.035em; }
+.comparisonContent > p { max-width: 680px; margin: 10px 0 22px; color: var(--muted); line-height: 1.5; }
+.comparisonGrid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+.comparisonGrid article { position: relative; padding: 20px; border: 1px solid var(--line); background: var(--surface-strong); }
+.comparisonGrid h3 { margin: 0; padding-right: 28px; font-family: Georgia, serif; font-size: 25px; font-weight: 500; }
+.comparisonGrid article > p { min-height: 40px; margin: 6px 0 15px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+.comparisonGrid dl { margin: 0; }
+.comparisonGrid dl div { padding: 9px 0; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 10px; font-size: 11px; }
+.comparisonGrid dt { color: var(--muted); }
+.comparisonGrid dd { margin: 0; text-align: right; font-weight: 700; }
+.removeComparison { position: absolute; top: 10px; right: 10px; width: 36px; height: 36px; border: 0; background: transparent; color: var(--muted); display: grid; place-items: center; }
+.comparisonCaveat { margin-top: 14px; padding: 13px; background: var(--sage); color: var(--spruce-dark); display: flex; gap: 9px; font-size: 12px; line-height: 1.45; }
+.comparisonCaveat svg { flex: none; }
 
 .authPanel { width: min(460px, 100%); margin: auto; padding: 0 28px 27px; background: var(--surface); box-shadow: var(--shadow); }
 .authPanel .panelHeader { margin: 0 -28px; }
@@ -250,6 +284,7 @@ h1, h2, h3, p { text-wrap: pretty; }
   .criteriaBody { grid-template-columns: 1fr 1fr; }
   .twoColumn { grid-template-columns: 1fr; }
   .bottomNav { position: fixed; left: 10px; right: 10px; bottom: 9px; z-index: 40; height: 68px; padding: 7px 7px max(7px, env(safe-area-inset-bottom)); border: 1px solid rgba(255,255,255,.08); border-radius: 14px; background: rgba(15,46,38,.97); box-shadow: 0 15px 40px rgba(10,26,20,.25); display: grid; grid-template-columns: repeat(5, 1fr); }
+  .comparisonTray { left: 12px; right: 12px; bottom: 84px; width: auto; transform: none; }
   .bottomNav button { position: relative; min-width: 0; border: 0; background: transparent; color: #aebfb7; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; }
   .bottomNav button.active { color: #fff; }
   .bottomNav button.featured .navIcon { width: 38px; height: 38px; margin-top: -23px; border: 4px solid var(--paper); border-radius: 11px; background: #fff; color: var(--spruce-dark); display: grid; place-items: center; }
@@ -289,6 +324,9 @@ h1, h2, h3, p { text-wrap: pretty; }
   .workspaceHeading { display: block; }
   .verificationBadge { display: inline-block; margin-top: 12px; }
   .operatorMetrics span { padding-inline: 8px; }
+  .assistantBlock form { grid-template-columns: 1fr; }
+  .comparisonContent { padding: 22px 16px; }
+  .comparisonGrid { grid-template-columns: 1fr; }
   .overlay { padding: 0; }
   .detailPanel { width: 100%; }
   .detailContent { padding: 20px 16px; }

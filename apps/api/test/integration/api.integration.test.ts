@@ -96,6 +96,14 @@ integration('API and PostgreSQL integration', () => {
       assert.equal(detail.statusCode, 200, detail.body);
       assert.equal(detail.json().publications.length, 1);
 
+      const answer = await app.inject({
+        method: 'POST', url: `/v1/opportunities/${propertyId}/questions`,
+        payload: { question: '¿Cuál es el precio por m²?' }
+      });
+      assert.equal(answer.statusCode, 200, answer.body);
+      assert.match(answer.json().answer, /USD/);
+      assert.equal(answer.json().evidence.length, 2);
+
       const saved = await app.inject({
         method: 'PUT',
         url: `/v1/opportunities/${propertyId}/saved`,

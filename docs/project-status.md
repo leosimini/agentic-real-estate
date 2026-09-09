@@ -10,24 +10,24 @@ Last updated: 2026-09-09
 - Authenticated, tenant-scoped API for canonical search/detail, saved/dismissed state, monitors, alerts, and direct publishing.
 - Transactional direct publishing with immutable source snapshots, canonical candidate evidence, review queues, and idempotent replay.
 - Leased recurring monitor execution with persisted snapshots, meaningful-change suppression, and idempotent in-app delivery.
-- Automated coverage: 40 unit/contract checks plus four PostgreSQL integration scenarios.
+- Automated coverage: 43 unit/contract checks plus four PostgreSQL integration scenarios.
 - Product direction recorded in `PRODUCT.md`: Spanish (Argentina), ARS/USD, five launch markets, and WCAG 2.2 AA.
 - Mobile Discover, canonical detail/provenance, save/dismiss, monitor/alert, private publishing, and profile journeys verified at 360px against the production Docker build.
 - Provider-neutral natural-language intent interpretation with strict structured outputs, editable confirmation, deterministic fallback, request metadata, and Argentine-language evals.
 - Professional onboarding, verified-operator gates, idempotent bounded imports, provenance-preserving claims, publisher-owned availability updates, inquiry routing, and mobile inventory/inbox UI.
+- Grounded property Q&A and two-to-three-item comparison with source count, freshness, budget, and price-per-square-metre evidence.
+- Keyboard-contained dialogs, background inertness, focus restoration, a skip link, live result announcements, stronger secondary-text contrast, and a 360px no-overflow check.
 
 ## Current work
 
-- Adding basic comparison and property Q&A.
 - Hardening production observability, notification delivery, and release operations.
 
 ## Next priorities
 
-1. Basic comparison and property Q&A.
-2. Email notification adapter and delivery retry/dead-letter operations.
-3. Account verification/recovery and revocable sessions.
-4. Accessibility, load, backup/restore, and deployment gates.
-5. Authorized launch-source integration and media pipeline.
+1. Email notification adapter and delivery retry/dead-letter operations.
+2. Account verification/recovery and revocable sessions.
+3. Automated accessibility, load, backup/restore, and deployment gates.
+4. Authorized launch-source integration and media pipeline.
 
 ## Known technical debt
 
@@ -46,4 +46,4 @@ Last updated: 2026-09-09
 - Media storage and upload security.
 - Production telemetry, secrets management, backups, and restore validation.
 - Account recovery and email verification.
-- End-to-end accessibility, performance, and security release gates.
+- Automated end-to-end accessibility, performance, and security release gates.
