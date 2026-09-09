@@ -122,6 +122,29 @@ integration('API and PostgreSQL integration', () => {
         }
       });
       assert.equal(monitor.statusCode, 201, monitor.body);
+      const monitorBody = monitor.json();
+      assert.equal(monitorBody.intentText, 'Three rooms in Belgrano below USD 250k');
+      assert.equal(monitorBody.enabled, true);
+
+      const pausedMonitor = await app.inject({
+        method: 'PATCH',
+        url: `/v1/monitors/${monitorBody.id}`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { enabled: false }
+      });
+      assert.equal(pausedMonitor.statusCode, 200, pausedMonitor.body);
+      assert.equal(pausedMonitor.json().enabled, false);
+
+      const createdAlert = await query<{ id: string }>(`
+        INSERT INTO alert (user_id, monitor_id, type, title, body)
+        VALUES ($1,$2,'monitor_digest','Price changed','One relevant change') RETURNING id
+      `, [userId, monitorBody.id]);
+      const readAlert = await app.inject({
+        method: 'PUT',
+        url: `/v1/alerts/${createdAlert.rows[0]!.id}/read`,
+        headers: { authorization: `Bearer ${token}` }
+      });
+      assert.equal(readAlert.statusCode, 204, readAlert.body);
 
       const secondRegistration = await app.inject({
         method: 'POST',
@@ -138,6 +161,12 @@ integration('API and PostgreSQL integration', () => {
       });
       assert.equal(secondMonitors.statusCode, 200);
       assert.deepEqual(secondMonitors.json().items, []);
+      const cannotReadAnotherUsersAlert = await app.inject({
+        method: 'PUT',
+        url: `/v1/alerts/${createdAlert.rows[0]!.id}/read`,
+        headers: { authorization: `Bearer ${secondToken}` }
+      });
+      assert.equal(cannotReadAnotherUsersAlert.statusCode, 404);
     } finally {
       await withTransaction(async (client) => {
         if (publicationId) await client.query('DELETE FROM publication WHERE id = $1', [publicationId]);

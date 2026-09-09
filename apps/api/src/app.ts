@@ -3,7 +3,14 @@ import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
 import { z } from 'zod';
-import { opportunityDtoSchema, publicationDtoSchema, searchCriteriaSchema } from '@realty/core';
+import {
+  alertDtoSchema,
+  monitorDtoSchema,
+  opportunityDtoSchema,
+  propertyHistoryEventDtoSchema,
+  publicationDtoSchema,
+  searchCriteriaSchema
+} from '@realty/core';
 import { normalizeAddress } from '@realty/ingestion';
 import { databaseReady, query, withTransaction } from '@realty/db';
 import {
@@ -40,6 +47,11 @@ const monitorInputSchema = z.object({
   timezone: z.string().trim().min(1).max(100).default('America/Argentina/Buenos_Aires'),
   instantExceptional: z.boolean().default(true)
 }).strict();
+const monitorUpdateSchema = monitorInputSchema.partial().extend({ enabled: z.boolean().optional() }).refine(
+  (value) => Object.keys(value).length > 0,
+  { message: 'At least one monitor field is required' }
+);
+const idParamsSchema = z.object({ id: z.string().uuid() }).strict();
 
 const opportunityQuerySchema = z.object({
   operation: z.enum(['sale', 'rent']).optional(),
@@ -107,6 +119,31 @@ type PublicationRow = {
   source_name: string;
 };
 
+type MonitorRow = {
+  id: string;
+  name: string;
+  intent_text: string;
+  criteria: unknown;
+  cadence: 'hourly' | 'daily' | 'weekly';
+  timezone: string;
+  instant_exceptional: boolean;
+  enabled: boolean;
+  last_run_at: Date | null;
+  next_run_at: Date | null;
+  created_at: Date;
+};
+
+type AlertRow = {
+  id: string;
+  monitor_id: string | null;
+  type: string;
+  title: string;
+  body: string;
+  payload: Record<string, unknown>;
+  created_at: Date;
+  read_at: Date | null;
+};
+
 function publicUser(user: Pick<UserRow, 'id' | 'email' | 'display_name' | 'role'>) {
   return { id: user.id, email: user.email, displayName: user.display_name, role: user.role };
 }
@@ -138,6 +175,35 @@ function opportunityDto(row: OpportunityRow) {
     publicationCount: row.publication_count,
     lastVerifiedAt: verifiedAt,
     freshness
+  });
+}
+
+function monitorDto(row: MonitorRow) {
+  return monitorDtoSchema.parse({
+    id: row.id,
+    name: row.name,
+    intentText: row.intent_text,
+    criteria: row.criteria,
+    cadence: row.cadence,
+    timezone: row.timezone,
+    instantExceptional: row.instant_exceptional,
+    enabled: row.enabled,
+    lastRunAt: row.last_run_at?.toISOString() ?? null,
+    nextRunAt: row.next_run_at?.toISOString() ?? null,
+    createdAt: row.created_at.toISOString()
+  });
+}
+
+function alertDto(row: AlertRow) {
+  return alertDtoSchema.parse({
+    id: row.id,
+    monitorId: row.monitor_id,
+    type: row.type,
+    title: row.title,
+    body: row.body,
+    payload: row.payload,
+    createdAt: row.created_at.toISOString(),
+    readAt: row.read_at?.toISOString() ?? null
   });
 }
 
@@ -338,7 +404,7 @@ export async function buildApp(config: ApiConfig = loadApiConfig()): Promise<Fas
         WHERE pub.property_id = $1
         ORDER BY (pub.publication_status = 'active') DESC, pub.last_verified_at DESC NULLS LAST
       `, [property.id]),
-      query(`
+      query<{ event_type: string; event_at: Date; payload: Record<string, unknown> }>(`
         SELECT event_type, event_at, payload FROM property_event
         WHERE property_id = $1 ORDER BY event_at DESC LIMIT 100
       `, [property.id])
@@ -364,7 +430,11 @@ export async function buildApp(config: ApiConfig = loadApiConfig()): Promise<Fas
         lastSeenAt: publication.last_seen_at.toISOString(),
         lastVerifiedAt: publication.last_verified_at?.toISOString() ?? null
       })),
-      history: history.rows
+      history: history.rows.map((event) => propertyHistoryEventDtoSchema.parse({
+        type: event.event_type,
+        occurredAt: event.event_at.toISOString(),
+        payload: event.payload
+      }))
     };
   });
 
@@ -372,21 +442,62 @@ export async function buildApp(config: ApiConfig = loadApiConfig()): Promise<Fas
     const parsed = monitorInputSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: { code: 'invalid_request', details: parsed.error.flatten() } });
     const input = parsed.data;
-    const result = await query(`
+    const result = await query<MonitorRow>(`
       INSERT INTO monitor (user_id, name, intent_text, criteria, cadence, timezone, instant_exceptional, next_run_at)
       VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, now()) RETURNING *
     `, [request.user.sub, input.name, input.intentText, JSON.stringify(input.criteria), input.cadence, input.timezone, input.instantExceptional]);
-    return reply.code(201).send(result.rows[0]);
+    return reply.code(201).send(monitorDto(result.rows[0]!));
   });
 
   app.get('/v1/monitors', { preHandler: authenticate }, async (request) => {
-    const result = await query('SELECT * FROM monitor WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [request.user.sub]);
-    return { items: result.rows };
+    const result = await query<MonitorRow>('SELECT * FROM monitor WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [request.user.sub]);
+    return { items: result.rows.map(monitorDto) };
+  });
+
+  app.patch('/v1/monitors/:id', { preHandler: authenticate }, async (request, reply) => {
+    const params = idParamsSchema.safeParse(request.params);
+    const input = monitorUpdateSchema.safeParse(request.body);
+    if (!params.success || !input.success) {
+      return reply.code(400).send({ error: { code: 'invalid_request', details: input.success ? undefined : input.error.flatten() } });
+    }
+    const value = input.data;
+    const updated = await query<MonitorRow>(`
+      UPDATE monitor SET
+        name=COALESCE($3,name), intent_text=COALESCE($4,intent_text), criteria=COALESCE($5::jsonb,criteria),
+        cadence=COALESCE($6,cadence), timezone=COALESCE($7,timezone),
+        instant_exceptional=COALESCE($8,instant_exceptional), enabled=COALESCE($9,enabled),
+        next_run_at=CASE WHEN $9::boolean = true AND enabled = false THEN now() ELSE next_run_at END,
+        lease_until=CASE WHEN $9::boolean = false THEN NULL ELSE lease_until END
+      WHERE id=$1 AND user_id=$2
+      RETURNING *
+    `, [
+      params.data.id,
+      request.user.sub,
+      value.name ?? null,
+      value.intentText ?? null,
+      value.criteria === undefined ? null : JSON.stringify(value.criteria),
+      value.cadence ?? null,
+      value.timezone ?? null,
+      value.instantExceptional ?? null,
+      value.enabled ?? null
+    ]);
+    if (!updated.rows[0]) return reply.code(404).send({ error: { code: 'not_found', message: 'Monitor was not found' } });
+    return monitorDto(updated.rows[0]);
   });
 
   app.get('/v1/alerts', { preHandler: authenticate }, async (request) => {
-    const result = await query('SELECT * FROM alert WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [request.user.sub]);
-    return { items: result.rows };
+    const result = await query<AlertRow>('SELECT * FROM alert WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100', [request.user.sub]);
+    return { items: result.rows.map(alertDto) };
+  });
+
+  app.put('/v1/alerts/:id/read', { preHandler: authenticate }, async (request, reply) => {
+    const params = idParamsSchema.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: { code: 'invalid_request' } });
+    const updated = await query(`
+      UPDATE alert SET read_at=COALESCE(read_at,now()) WHERE id=$1 AND user_id=$2 RETURNING id
+    `, [params.data.id, request.user.sub]);
+    if (!updated.rowCount) return reply.code(404).send({ error: { code: 'not_found', message: 'Alert was not found' } });
+    return reply.code(204).send();
   });
 
   app.get('/v1/saved', { preHandler: authenticate }, async (request) => {

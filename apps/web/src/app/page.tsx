@@ -1,65 +1,529 @@
-const properties = [
-  { id: 1, price: 'USD 225,000', title: '3 rooms · 72 m² · Belgrano', match: 94, meta: '3 publications · verified 2h ago', note: '9% below similar properties' },
-  { id: 2, price: 'USD 238,000', title: '3 rooms · 81 m² · Colegiales', match: 91, meta: 'Owner direct · verified today', note: 'Quiet street likelihood: high' },
-  { id: 3, price: 'USD 214,000', title: '3 rooms · 68 m² · Belgrano R', match: 88, meta: '2 publications · price reduced', note: 'USD 11k reduction this week' }
-];
+'use client';
+
+import {
+  ArrowDownRight,
+  Bell,
+  Bookmark,
+  Building2,
+  Check,
+  ChevronRight,
+  CircleUserRound,
+  Clock3,
+  Compass,
+  Eye,
+  EyeOff,
+  FilePlus2,
+  Heart,
+  House,
+  ListFilter,
+  LoaderCircle,
+  LogIn,
+  MapPin,
+  Menu,
+  MessageCircle,
+  Pause,
+  Play,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  X
+} from 'lucide-react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ApiError,
+  api,
+  searchQuery,
+  type Alert,
+  type Currency,
+  type Monitor,
+  type Opportunity,
+  type OpportunityDetail,
+  type Operation,
+  type SearchCriteria
+} from '../lib/api';
+
+type Tab = 'discover' | 'monitors' | 'publish' | 'saved' | 'profile';
+type User = { id: string; email: string; displayName: string | null; role: string };
+
+const cities = ['Buenos Aires', 'Córdoba', 'Rosario', 'Mar del Plata', 'Mendoza'];
+const starterIntent = 'Departamento de 3 ambientes en Palermo o Colegiales, hasta USD 250.000. Con balcón y sin planta baja.';
+
+function deriveCriteria(intent: string): SearchCriteria {
+  const normalized = intent.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const locations = cities.filter((city) => normalized.includes(city.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()));
+  for (const neighborhood of ['Palermo', 'Colegiales', 'Belgrano', 'Nueva Córdoba', 'Pichincha', 'Güemes']) {
+    if (normalized.includes(neighborhood.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase())) locations.push(neighborhood);
+  }
+  const currency: Currency = /\b(ars|pesos?)\b/.test(normalized) ? 'ARS' : 'USD';
+  const roomMatch = normalized.match(/(\d+)\s*(?:ambientes?|habitaciones?|dormitorios?)/);
+  const rawPrice = normalized.match(/(?:usd|u\$s|ars|\$)\s*([\d.]+)/)?.[1]
+    ?? normalized.match(/(?:hasta|menos de|maximo|max)\s*(?:usd|u\$s|ars|\$)?\s*([\d.]+)/)?.[1];
+  const parsedPrice = rawPrice ? Number(rawPrice.replace(/\./g, '')) : undefined;
+  return {
+    operation: normalized.includes('alquil') ? 'rent' : 'sale',
+    locations: [...new Set(locations.length ? locations : ['Buenos Aires'])],
+    currency,
+    maxPrice: parsedPrice && Number.isFinite(parsedPrice) ? parsedPrice : undefined,
+    rooms: roomMatch ? Number(roomMatch[1]) : undefined,
+    excludedFloors: /sin planta baja|no planta baja/.test(normalized) ? ['Planta baja'] : undefined,
+    preferences: [
+      normalized.includes('balcon') ? 'Balcón' : '',
+      normalized.includes('luminos') ? 'Luminoso' : '',
+      normalized.includes('silenc') || normalized.includes('tranquil') ? 'Calle tranquila' : ''
+    ].filter(Boolean)
+  };
+}
+
+function formatMoney(amount: number | null, currency: string | null): string {
+  if (amount === null || !currency) return 'Precio a consultar';
+  return new Intl.NumberFormat('es-AR', {
+    style: 'currency', currency, maximumFractionDigits: 0
+  }).format(amount);
+}
+
+function formatDate(value: string | null): string {
+  if (!value) return 'Aún no ejecutado';
+  return new Intl.DateTimeFormat('es-AR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+}
+
+function freshnessLabel(value: Opportunity['freshness']): string {
+  if (value === 'verified_today') return 'Verificada hoy';
+  if (value === 'verified_recently') return 'Verificada recientemente';
+  if (value === 'status_uncertain') return 'Estado por confirmar';
+  return 'Disponibilidad por verificar';
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof ApiError && error.status === 401) return 'Iniciá sesión para continuar.';
+  return error instanceof Error ? error.message : 'Algo salió mal. Probá de nuevo.';
+}
 
 export default function Home() {
+  const [activeTab, setActiveTab] = useState<Tab>('discover');
+  const [mobileMenu, setMobileMenu] = useState(false);
+  const [intent, setIntent] = useState(starterIntent);
+  const [criteria, setCriteria] = useState<SearchCriteria>(() => deriveCriteria(starterIntent));
+  const [criteriaOpen, setCriteriaOpen] = useState(true);
+  const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
+  const [saved, setSaved] = useState<Opportunity[]>([]);
+  const [monitors, setMonitors] = useState<Monitor[]>([]);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [detail, setDetail] = useState<OpportunityDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('register');
+  const [token, setToken] = useState<string | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+
+  const loadOpportunities = useCallback(async (next: SearchCriteria = criteria) => {
+    setLoading(true);
+    setNotice(null);
+    try {
+      const result = await api<{ items: Opportunity[] }>(`/v1/opportunities?${searchQuery(next)}`);
+      setOpportunities(result.items);
+    } catch (error) {
+      setNotice(errorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  }, [criteria]);
+
+  const loadPrivateData = useCallback(async (currentToken: string) => {
+    const [me, monitorData, alertData, savedData] = await Promise.all([
+      api<{ user: User }>('/v1/me', {}, currentToken),
+      api<{ items: Monitor[] }>('/v1/monitors', {}, currentToken),
+      api<{ items: Alert[] }>('/v1/alerts', {}, currentToken),
+      api<{ items: Opportunity[] }>('/v1/saved', {}, currentToken)
+    ]);
+    setUser(me.user);
+    setMonitors(monitorData.items);
+    setAlerts(alertData.items);
+    setSaved(savedData.items);
+  }, []);
+
+  useEffect(() => {
+    void loadOpportunities();
+    const requestedOpportunity = new URLSearchParams(window.location.search).get('opportunity');
+    if (requestedOpportunity && /^[0-9a-f-]{36}$/i.test(requestedOpportunity)) {
+      void api<OpportunityDetail>(`/v1/opportunities/${requestedOpportunity}`)
+        .then(setDetail)
+        .catch((error) => setNotice(errorMessage(error)));
+    }
+    const stored = window.localStorage.getItem('agentic-real-estate-token');
+    if (stored) {
+      setToken(stored);
+      void loadPrivateData(stored).catch(() => {
+        window.localStorage.removeItem('agentic-real-estate-token');
+        setToken(null);
+      });
+    }
+  }, []); // Initial hydration only.
+
+  useEffect(() => {
+    if (!detail && !authOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (authOpen) setAuthOpen(false);
+      else setDetail(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [authOpen, detail]);
+
+  const savedIds = useMemo(() => new Set(saved.map((item) => item.id)), [saved]);
+  const unreadAlerts = alerts.filter((alert) => !alert.readAt).length;
+
+  function selectTab(tab: Tab) {
+    setActiveTab(tab);
+    setMobileMenu(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (!token && tab !== 'discover') setAuthOpen(true);
+  }
+
+  function interpretIntent(event: FormEvent) {
+    event.preventDefault();
+    const next = deriveCriteria(intent);
+    setCriteria(next);
+    setCriteriaOpen(true);
+    void loadOpportunities(next);
+  }
+
+  async function toggleSaved(item: Opportunity) {
+    if (!token) return setAuthOpen(true);
+    const isSaved = savedIds.has(item.id);
+    try {
+      await api<void>(`/v1/opportunities/${item.id}/saved`, { method: isSaved ? 'DELETE' : 'PUT' }, token);
+      setSaved((current) => isSaved ? current.filter((savedItem) => savedItem.id !== item.id) : [item, ...current]);
+      setNotice(isSaved ? 'Quitamos la oportunidad de tus guardados.' : 'Oportunidad guardada.');
+    } catch (error) {
+      setNotice(errorMessage(error));
+    }
+  }
+
+  async function dismiss(item: Opportunity) {
+    if (!token) return setAuthOpen(true);
+    try {
+      await api<void>(`/v1/opportunities/${item.id}/dismissed`, {
+        method: 'PUT', body: JSON.stringify({ reason: 'other', note: 'Descartada desde Descubrir' })
+      }, token);
+      setOpportunities((current) => current.filter((opportunity) => opportunity.id !== item.id));
+      setSaved((current) => current.filter((opportunity) => opportunity.id !== item.id));
+      setNotice('La descartamos y la tendremos en cuenta para futuras recomendaciones.');
+    } catch (error) {
+      setNotice(errorMessage(error));
+    }
+  }
+
+  async function openDetail(id: string) {
+    setNotice(null);
+    try {
+      setDetail(await api<OpportunityDetail>(`/v1/opportunities/${id}`));
+    } catch (error) {
+      setNotice(errorMessage(error));
+    }
+  }
+
+  async function createMonitor() {
+    if (!token) return setAuthOpen(true);
+    try {
+      const created = await api<Monitor>('/v1/monitors', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: criteria.locations?.join(' + ') || 'Mi búsqueda',
+          intentText: intent,
+          criteria,
+          cadence: 'daily',
+          timezone: 'America/Argentina/Buenos_Aires',
+          instantExceptional: true
+        })
+      }, token);
+      setMonitors((current) => [created, ...current]);
+      setNotice('Monitor activado. Te avisaremos sólo cuando haya algo relevante.');
+      setActiveTab('monitors');
+    } catch (error) {
+      setNotice(errorMessage(error));
+    }
+  }
+
+  async function toggleMonitor(monitor: Monitor) {
+    if (!token) return;
+    try {
+      const updated = await api<Monitor>(`/v1/monitors/${monitor.id}`, {
+        method: 'PATCH', body: JSON.stringify({ enabled: !monitor.enabled })
+      }, token);
+      setMonitors((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } catch (error) {
+      setNotice(errorMessage(error));
+    }
+  }
+
+  async function markRead(alert: Alert) {
+    if (!token || alert.readAt) return;
+    try {
+      await api<void>(`/v1/alerts/${alert.id}/read`, { method: 'PUT' }, token);
+      setAlerts((current) => current.map((item) => item.id === alert.id ? { ...item, readAt: new Date().toISOString() } : item));
+    } catch (error) {
+      setNotice(errorMessage(error));
+    }
+  }
+
+  function onAuthenticated(nextToken: string, nextUser: User) {
+    window.localStorage.setItem('agentic-real-estate-token', nextToken);
+    setToken(nextToken);
+    setUser(nextUser);
+    setAuthOpen(false);
+    setNotice(`Hola${nextUser.displayName ? `, ${nextUser.displayName}` : ''}. Tu espacio ya está listo.`);
+    void loadPrivateData(nextToken).catch((error) => setNotice(errorMessage(error)));
+  }
+
+  function logout() {
+    window.localStorage.removeItem('agentic-real-estate-token');
+    setToken(null);
+    setUser(null);
+    setMonitors([]);
+    setAlerts([]);
+    setSaved([]);
+    setActiveTab('discover');
+  }
+
   return (
-    <main className="shell">
-      <header className="topbar">
-        <div>
-          <span className="eyebrow">REALTY AGENT</span>
-          <h1>Your market, continuously searched.</h1>
-        </div>
-        <button className="avatar" aria-label="Profile">A</button>
-      </header>
+    <div className="appFrame">
+      <aside className="sideRail" aria-label="Navegación principal">
+        <Brand />
+        <NavItems active={activeTab} unread={unreadAlerts} onSelect={selectTab} />
+        <button className="accountSummary" onClick={() => token ? setActiveTab('profile') : setAuthOpen(true)}>
+          <span className="accountAvatar">{user?.displayName?.[0] ?? user?.email[0]?.toUpperCase() ?? '?'}</span>
+          <span><strong>{user?.displayName ?? 'Tu espacio'}</strong><small>{user ? user.email : 'Ingresar o crear cuenta'}</small></span>
+          <ChevronRight size={17} />
+        </button>
+      </aside>
 
-      <section className="composer card">
-        <label htmlFor="intent">What are you looking for?</label>
-        <textarea id="intent" defaultValue="3-room apartment in Belgrano or Colegiales under USD 250k. Quiet street, balcony, no ground floor." />
-        <div className="composerActions">
-          <span>AI converts this into a live monitor</span>
-          <button>Create monitor</button>
-        </div>
-      </section>
+      <main className="mainContent">
+        <header className="mobileHeader">
+          <Brand />
+          <button className="iconButton" aria-label="Abrir menú" onClick={() => setMobileMenu(!mobileMenu)}><Menu /></button>
+        </header>
+        {mobileMenu && <div className="mobileMenu"><NavItems active={activeTab} unread={unreadAlerts} onSelect={selectTab} /></div>}
 
-      <section className="stats">
-        <div><strong>32</strong><span>Strong matches</span></div>
-        <div><strong>7</strong><span>New today</span></div>
-        <div><strong>4</strong><span>Price drops</span></div>
-      </section>
+        {notice && <div className="notice" role="status"><span>{notice}</span><button aria-label="Cerrar mensaje" onClick={() => setNotice(null)}><X size={17} /></button></div>}
 
-      <section className="sectionHeader">
-        <div><span className="eyebrow">BEST RIGHT NOW</span><h2>Worth your attention</h2></div>
-        <button className="textButton">View all</button>
-      </section>
+        {activeTab === 'discover' && <Discover
+          intent={intent}
+          setIntent={setIntent}
+          criteria={criteria}
+          setCriteria={setCriteria}
+          criteriaOpen={criteriaOpen}
+          setCriteriaOpen={setCriteriaOpen}
+          opportunities={opportunities}
+          loading={loading}
+          savedIds={savedIds}
+          onInterpret={interpretIntent}
+          onApply={() => void loadOpportunities(criteria)}
+          onCreateMonitor={createMonitor}
+          onOpen={openDetail}
+          onSave={toggleSaved}
+          onDismiss={dismiss}
+        />}
+        {activeTab === 'monitors' && <Monitors monitors={monitors} alerts={alerts} authenticated={Boolean(token)} onToggle={toggleMonitor} onRead={markRead} onDiscover={() => setActiveTab('discover')} />}
+        {activeTab === 'publish' && <Publish token={token} onNeedAuth={() => setAuthOpen(true)} onNotice={setNotice} />}
+        {activeTab === 'saved' && <Saved items={saved} authenticated={Boolean(token)} onOpen={openDetail} onRemove={toggleSaved} onDiscover={() => setActiveTab('discover')} />}
+        {activeTab === 'profile' && <Profile user={user} onLogin={() => setAuthOpen(true)} onLogout={logout} />}
+      </main>
 
-      <section className="grid">
-        {properties.map((p) => (
-          <article className="property card" key={p.id}>
-            <div className="media">
-              <span className="match">{p.match}% match</span>
-              <span className="mediaLabel">Property media</span>
-            </div>
-            <div className="propertyBody">
-              <div className="priceRow"><h3>{p.price}</h3><button aria-label="Save">♡</button></div>
-              <p className="propertyTitle">{p.title}</p>
-              <p className="signal">{p.note}</p>
-              <p className="meta">{p.meta}</p>
-              <div className="actions"><button>Why it matches</button><button>Compare</button><button>Ask</button></div>
-            </div>
-          </article>
-        ))}
-      </section>
-
-      <nav className="bottomNav" aria-label="Main navigation">
-        <a className="active" href="#">Discover<span>●</span></a>
-        <a href="#">Monitors<span>3</span></a>
-        <button className="publish">+</button>
-        <a href="#">Saved<span>12</span></a>
-        <a href="#">You<span>○</span></a>
+      <nav className="bottomNav" aria-label="Navegación principal">
+        <NavButton tab="discover" label="Descubrir" icon={<Compass />} active={activeTab} onSelect={selectTab} />
+        <NavButton tab="monitors" label="Monitores" icon={<Bell />} badge={unreadAlerts} active={activeTab} onSelect={selectTab} />
+        <NavButton tab="publish" label="Publicar" icon={<FilePlus2 />} active={activeTab} onSelect={selectTab} featured />
+        <NavButton tab="saved" label="Guardados" icon={<Bookmark />} active={activeTab} onSelect={selectTab} />
+        <NavButton tab="profile" label="Vos" icon={<CircleUserRound />} active={activeTab} onSelect={selectTab} />
       </nav>
-    </main>
+
+      {detail && <DetailPanel detail={detail} isSaved={savedIds.has(detail.opportunity.id)} onClose={() => setDetail(null)} onSave={() => toggleSaved(detail.opportunity)} />}
+      {authOpen && <AuthPanel mode={authMode} setMode={setAuthMode} onClose={() => setAuthOpen(false)} onAuthenticated={onAuthenticated} />}
+    </div>
   );
+}
+
+function Brand() {
+  return <div className="brand" aria-label="Umbral, inicio"><span className="brandMark"><House size={18} /></span><span>Umbral</span></div>;
+}
+
+function NavItems({ active, unread, onSelect }: { active: Tab; unread: number; onSelect: (tab: Tab) => void }) {
+  const items: Array<{ tab: Tab; label: string; icon: React.ReactNode; badge?: number }> = [
+    { tab: 'discover', label: 'Descubrir', icon: <Compass /> },
+    { tab: 'monitors', label: 'Monitores', icon: <Bell />, badge: unread },
+    { tab: 'saved', label: 'Guardados', icon: <Bookmark /> },
+    { tab: 'publish', label: 'Publicar', icon: <FilePlus2 /> }
+  ];
+  return <div className="navItems">{items.map((item) => <button key={item.tab} className={active === item.tab ? 'active' : ''} onClick={() => onSelect(item.tab)}>{item.icon}<span>{item.label}</span>{Boolean(item.badge) && <b>{item.badge}</b>}</button>)}</div>;
+}
+
+function NavButton({ tab, label, icon, badge, active, onSelect, featured = false }: { tab: Tab; label: string; icon: React.ReactNode; badge?: number; active: Tab; onSelect: (tab: Tab) => void; featured?: boolean }) {
+  return <button className={`${active === tab ? 'active' : ''} ${featured ? 'featured' : ''}`} onClick={() => onSelect(tab)} aria-current={active === tab ? 'page' : undefined}><span className="navIcon">{icon}{Boolean(badge) && <b>{badge}</b>}</span><small>{label}</small></button>;
+}
+
+type DiscoverProps = {
+  intent: string;
+  setIntent: (value: string) => void;
+  criteria: SearchCriteria;
+  setCriteria: (value: SearchCriteria) => void;
+  criteriaOpen: boolean;
+  setCriteriaOpen: (value: boolean) => void;
+  opportunities: Opportunity[];
+  loading: boolean;
+  savedIds: Set<string>;
+  onInterpret: (event: FormEvent) => void;
+  onApply: () => void;
+  onCreateMonitor: () => void;
+  onOpen: (id: string) => void;
+  onSave: (item: Opportunity) => void;
+  onDismiss: (item: Opportunity) => void;
+};
+
+function Discover(props: DiscoverProps) {
+  return <>
+    <section className="hero">
+      <div className="heroIntro">
+        <span className="sectionKicker"><Sparkles size={15} /> Búsqueda asistida</span>
+        <h1>Tu próxima propiedad,<br />sin perseguir portales.</h1>
+        <p>Contanos qué necesitás. Ordenamos publicaciones repetidas, revisamos cambios y te mostramos sólo lo que merece atención.</p>
+      </div>
+      <div className="marketNote"><span className="liveDot" />Explorando cinco mercados argentinos</div>
+    </section>
+
+    <form className="intentComposer" onSubmit={props.onInterpret}>
+      <label htmlFor="intent">¿Qué estás buscando?</label>
+      <textarea id="intent" value={props.intent} onChange={(event) => props.setIntent(event.target.value)} rows={3} minLength={5} required />
+      <div className="composerFooter">
+        <span><ShieldCheck size={16} /> Vas a poder revisar cada criterio</span>
+        <button className="primaryButton" type="submit"><Sparkles size={17} /> Interpretar búsqueda</button>
+      </div>
+    </form>
+
+    <section className={`criteriaPanel ${props.criteriaOpen ? 'open' : ''}`} aria-label="Criterios interpretados">
+      <button className="criteriaHeader" onClick={() => props.setCriteriaOpen(!props.criteriaOpen)} aria-expanded={props.criteriaOpen}>
+        <span><Check size={17} /> Borrador editable</span><span><ListFilter size={16} /> {props.criteriaOpen ? 'Ocultar' : 'Revisar criterios'}</span>
+      </button>
+      {props.criteriaOpen && <div className="criteriaBody">
+        <Field label="Operación"><select value={props.criteria.operation} onChange={(event) => props.setCriteria({ ...props.criteria, operation: event.target.value as Operation })}><option value="sale">Comprar</option><option value="rent">Alquilar</option></select></Field>
+        <Field label="Zona"><select value={props.criteria.locations?.[0] ?? 'Buenos Aires'} onChange={(event) => props.setCriteria({ ...props.criteria, locations: [event.target.value] })}>{cities.map((city) => <option key={city}>{city}</option>)}</select></Field>
+        <Field label="Moneda"><select value={props.criteria.currency ?? 'USD'} onChange={(event) => props.setCriteria({ ...props.criteria, currency: event.target.value as Currency })}><option>USD</option><option>ARS</option></select></Field>
+        <Field label="Hasta"><input type="number" min="0" value={props.criteria.maxPrice ?? ''} placeholder="Sin máximo" onChange={(event) => props.setCriteria({ ...props.criteria, maxPrice: event.target.value ? Number(event.target.value) : undefined })} /></Field>
+        <Field label="Ambientes"><input type="number" min="0" value={props.criteria.rooms ?? ''} placeholder="Cualquiera" onChange={(event) => props.setCriteria({ ...props.criteria, rooms: event.target.value ? Number(event.target.value) : undefined })} /></Field>
+        <div className="criteriaActions"><button className="secondaryButton" type="button" onClick={props.onApply}><Search size={17} /> Ver oportunidades</button><button className="quietButton" type="button" onClick={props.onCreateMonitor}><Bell size={17} /> Activar monitor diario</button></div>
+      </div>}
+    </section>
+
+    <section className="resultsSection">
+      <div className="sectionHeading"><div><span className="sectionKicker">Selección actual</span><h2>Oportunidades, no duplicados</h2></div><span className="resultCount">{props.loading ? 'Buscando…' : `${props.opportunities.length} encontradas`}</span></div>
+      {props.loading ? <LoadingState /> : props.opportunities.length ? <div className="opportunityGrid">{props.opportunities.map((item, index) => <OpportunityCard key={item.id} item={item} index={index} saved={props.savedIds.has(item.id)} onOpen={props.onOpen} onSave={props.onSave} onDismiss={props.onDismiss} />)}</div> : <EmptyState icon={<Search />} title="Todavía no encontramos coincidencias" body="Probá ampliando la zona o el presupuesto. Si activás un monitor, seguimos buscando por vos." action="Revisar criterios" onAction={() => props.setCriteriaOpen(true)} />}
+    </section>
+  </>;
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <label className="field"><span>{label}</span>{children}</label>;
+}
+
+function OpportunityCard({ item, index, saved, onOpen, onSave, onDismiss }: { item: Opportunity; index: number; saved: boolean; onOpen: (id: string) => void; onSave: (item: Opportunity) => void; onDismiss: (item: Opportunity) => void }) {
+  return <article className="opportunityCard">
+    <button className={`propertyMedia mediaTone${index % 4}`} onClick={() => onOpen(item.id)} aria-label={`Ver ${item.title}`}>
+      <span className="mediaIndex">{String(index + 1).padStart(2, '0')}</span><Building2 size={44} strokeWidth={1.25} /><span>Fotos en la publicación de origen</span>
+    </button>
+    <div className="opportunityBody">
+      <div className="cardTopline"><span className="freshness"><Clock3 size={14} />{freshnessLabel(item.freshness)}</span><button className={`saveButton ${saved ? 'saved' : ''}`} onClick={() => onSave(item)} aria-label={saved ? 'Quitar de guardados' : 'Guardar oportunidad'}><Heart fill={saved ? 'currentColor' : 'none'} /></button></div>
+      <button className="cardTitle" onClick={() => onOpen(item.id)}><strong>{formatMoney(item.price, item.currency)}</strong><span>{item.address ?? item.title}</span></button>
+      <div className="facts"><span>{item.rooms ?? '—'} amb.</span><span>{item.areaTotalM2 ?? '—'} m²</span><span>{item.publicationCount} {item.publicationCount === 1 ? 'publicación' : 'publicaciones'}</span></div>
+      <div className="signalLine"><ArrowDownRight size={17} /><span>{item.publicationCount > 1 ? 'Comparamos todas las publicaciones de esta propiedad.' : 'Una fuente activa con trazabilidad visible.'}</span></div>
+      <div className="cardActions"><button onClick={() => onOpen(item.id)}>Ver evidencia <ChevronRight size={16} /></button><button onClick={() => onDismiss(item)}><EyeOff size={16} /> Descartar</button></div>
+    </div>
+  </article>;
+}
+
+function Monitors({ monitors, alerts, authenticated, onToggle, onRead, onDiscover }: { monitors: Monitor[]; alerts: Alert[]; authenticated: boolean; onToggle: (monitor: Monitor) => void; onRead: (alert: Alert) => void; onDiscover: () => void }) {
+  if (!authenticated) return <EmptyState icon={<LogIn />} title="Tus monitores viven en tu cuenta" body="Ingresá para delegar búsquedas y recibir sólo cambios relevantes." />;
+  return <section className="pageSection">
+    <PageHeading kicker="Seguimiento continuo" title="Monitores" body="Cada búsqueda vuelve a ejecutarse sola. Los cambios sin impacto se silencian." action={<button className="primaryButton" onClick={onDiscover}><Search size={17} /> Nueva búsqueda</button>} />
+    <div className="twoColumn">
+      <div><h2 className="subheading">Búsquedas activas</h2>{monitors.length ? <div className="stack">{monitors.map((monitor) => <article className="monitorCard" key={monitor.id}><div className="monitorStatus"><span className={monitor.enabled ? 'statusDot active' : 'statusDot'} /><span>{monitor.enabled ? 'Activo' : 'En pausa'}</span></div><h3>{monitor.name}</h3><p>{monitor.intentText}</p><div className="monitorMeta"><span><Clock3 size={15} /> Próxima: {formatDate(monitor.nextRunAt)}</span><span>{monitor.cadence === 'daily' ? 'Diario' : monitor.cadence === 'hourly' ? 'Cada hora' : 'Semanal'}</span></div><button className="secondaryButton" onClick={() => onToggle(monitor)}>{monitor.enabled ? <><Pause size={16} /> Pausar</> : <><Play size={16} /> Reanudar</>}</button></article>)}</div> : <EmptyState icon={<Bell />} title="Todavía no hay monitores" body="Empezá con una búsqueda y activala cuando los criterios estén bien." action="Crear una búsqueda" onAction={onDiscover} />}</div>
+      <div><h2 className="subheading">Cambios relevantes</h2>{alerts.length ? <div className="stack">{alerts.map((alert) => <button key={alert.id} className={`alertCard ${alert.readAt ? '' : 'unread'}`} onClick={() => onRead(alert)}><span className="alertIcon"><Bell size={18} /></span><span><strong>{alert.title}</strong><small>{alert.body}</small><time>{formatDate(alert.createdAt)}</time></span>{!alert.readAt && <i>Nueva</i>}</button>)}</div> : <EmptyState icon={<ShieldCheck />} title="Todo tranquilo" body="Acá aparecerán nuevas coincidencias, bajas de precio y cambios de disponibilidad." />}</div>
+    </div>
+  </section>;
+}
+
+function Saved({ items, authenticated, onOpen, onRemove, onDiscover }: { items: Opportunity[]; authenticated: boolean; onOpen: (id: string) => void; onRemove: (item: Opportunity) => void; onDiscover: () => void }) {
+  if (!authenticated) return <EmptyState icon={<LogIn />} title="Guardá una selección propia" body="Ingresá para comparar oportunidades sin volver a buscarlas." />;
+  return <section className="pageSection"><PageHeading kicker="Tu preselección" title="Guardados" body="Un espacio corto para decidir mejor, no otra lista interminable." />{items.length ? <div className="savedList">{items.map((item, index) => <OpportunityCard key={item.id} item={item} index={index} saved onOpen={onOpen} onSave={onRemove} onDismiss={() => undefined} />)}</div> : <EmptyState icon={<Bookmark />} title="Tu selección está vacía" body="Guardá las propiedades que quieras revisar con más calma." action="Ir a descubrir" onAction={onDiscover} />}</section>;
+}
+
+function Publish({ token, onNeedAuth, onNotice }: { token: string | null; onNeedAuth: () => void; onNotice: (message: string) => void }) {
+  const [submitting, setSubmitting] = useState(false);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!token) return onNeedAuth();
+    const form = event.currentTarget;
+    setSubmitting(true);
+    const data = new FormData(form);
+    try {
+      const result = await api<{ propertyId: string; potentialDuplicateCount: number }>('/v1/publications', {
+        method: 'POST',
+        headers: { 'idempotency-key': crypto.randomUUID() },
+        body: JSON.stringify({
+          address: data.get('address'), operation: data.get('operation'),
+          currency: data.get('currency'), price: Number(data.get('price')),
+          propertyType: data.get('propertyType'), rooms: data.get('rooms') ? Number(data.get('rooms')) : undefined,
+          areaTotalM2: data.get('area') ? Number(data.get('area')) : undefined,
+          description: data.get('description') || undefined
+        })
+      }, token);
+      form.reset();
+      onNotice(result.potentialDuplicateCount ? 'Publicación creada. Hay una posible coincidencia para revisión.' : 'Publicación creada y vinculada a su oportunidad canónica.');
+    } catch (error) {
+      onNotice(errorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+  return <section className="pageSection publishPage"><PageHeading kicker="Publicación directa" title="Publicá lo esencial" body="Empezá con los datos que definen la oportunidad. La trazabilidad queda visible y cualquier posible duplicado pasa a revisión." /><form className="publishForm" onSubmit={submit}><Field label="Dirección completa"><input name="address" required minLength={4} placeholder="Ej. Aráoz 1840, 4° B, Palermo" /></Field><div className="formRow"><Field label="Operación"><select name="operation"><option value="sale">Venta</option><option value="rent">Alquiler</option></select></Field><Field label="Tipo"><select name="propertyType"><option>Departamento</option><option>Casa</option><option>PH</option><option>Terreno</option></select></Field></div><div className="formRow"><Field label="Moneda"><select name="currency"><option>USD</option><option>ARS</option></select></Field><Field label="Precio"><input name="price" type="number" min="1" required placeholder="180000" /></Field></div><div className="formRow"><Field label="Ambientes"><input name="rooms" type="number" min="1" placeholder="3" /></Field><Field label="Superficie total"><input name="area" type="number" min="1" step="0.1" placeholder="72" /></Field></div><Field label="Descripción opcional"><textarea name="description" rows={4} maxLength={10000} placeholder="Estado, orientación, expensas y aquello que una visita debería saber." /></Field><div className="publishAssurance"><ShieldCheck /><span><strong>Control antes que velocidad.</strong> No fusionamos propiedades dudosas automáticamente.</span></div><button className="primaryButton submitButton" disabled={submitting}>{submitting ? <><LoaderCircle className="spin" /> Publicando…</> : <><FilePlus2 /> Publicar oportunidad</>}</button></form></section>;
+}
+
+function Profile({ user, onLogin, onLogout }: { user: User | null; onLogin: () => void; onLogout: () => void }) {
+  return <section className="pageSection"><PageHeading kicker="Cuenta y confianza" title={user?.displayName ?? 'Tu espacio'} body={user ? user.email : 'Creá una cuenta para conservar búsquedas, guardados y alertas.'} /><div className="profileCard"><span className="largeAvatar">{user?.displayName?.[0] ?? user?.email[0]?.toUpperCase() ?? '?'}</span><div><h2>{user ? 'Sesión activa' : 'Todavía no ingresaste'}</h2><p>{user ? 'Tus datos y acciones están aislados de otras cuentas.' : 'Sólo pedimos lo necesario para guardar tu actividad.'}</p></div><button className={user ? 'secondaryButton' : 'primaryButton'} onClick={user ? onLogout : onLogin}>{user ? 'Cerrar sesión' : 'Ingresar'}</button></div><div className="trustGrid"><article><ShieldCheck /><h3>Decisiones explicables</h3><p>La fuente, frescura y confianza quedan visibles.</p></article><article><Eye /><h3>Tu señal, sin ruido</h3><p>Los monitores suprimen cambios que no importan.</p></article><article><MessageCircle /><h3>IA bajo tu control</h3><p>Los criterios inferidos siempre se pueden editar.</p></article></div></section>;
+}
+
+function DetailPanel({ detail, isSaved, onClose, onSave }: { detail: OpportunityDetail; isSaved: boolean; onClose: () => void; onSave: () => void }) {
+  const item = detail.opportunity;
+  return <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section className="detailPanel" role="dialog" aria-modal="true" aria-labelledby="detail-title"><div className="panelHeader"><span>Oportunidad canónica</span><button className="iconButton" onClick={onClose} aria-label="Cerrar detalle" autoFocus><X /></button></div><div className="detailMedia"><Building2 size={58} strokeWidth={1.1} /><span>Consultá las fotos en cada publicación de origen</span></div><div className="detailContent"><div className="detailLead"><div><span className="freshness"><Clock3 size={14} />{freshnessLabel(item.freshness)}</span><h2 id="detail-title">{formatMoney(item.price, item.currency)}</h2><p>{item.address}</p></div><button className={`saveButton ${isSaved ? 'saved' : ''}`} onClick={onSave} aria-label={isSaved ? 'Quitar de guardados' : 'Guardar oportunidad'}><Heart fill={isSaved ? 'currentColor' : 'none'} /><span>{isSaved ? 'Guardada' : 'Guardar'}</span></button></div><div className="detailFacts"><span><strong>{item.rooms ?? '—'}</strong> ambientes</span><span><strong>{item.areaTotalM2 ?? '—'}</strong> m² totales</span><span><strong>{item.publicationCount}</strong> fuentes</span></div><section className="evidenceBlock"><span className="sectionKicker">Por qué verla</span><h3>Una sola propiedad, toda la evidencia</h3><p>Consolidamos las publicaciones vinculadas sin ocultar quién publicó, cuándo se verificó ni qué precio informa cada fuente.</p></section><section><div className="sectionHeading compact"><div><span className="sectionKicker">Proveniencia</span><h3>Publicaciones de origen</h3></div></div><div className="sourceList">{detail.publications.map((publication) => <a key={publication.id} href={publication.sourceUrl} target="_blank" rel="noreferrer"><span className="sourceIcon"><Building2 size={18} /></span><span><strong>{publication.sourceName}</strong><small>{publication.publisherName ?? (publication.publisherType === 'owner' ? 'Dueño directo' : 'Publicación agregada')} · {formatMoney(publication.price, publication.currency)}</small></span><span className={`sourceStatus ${publication.status}`}>{publication.status === 'active' ? 'Activa' : 'Revisar'}</span><ChevronRight size={17} /></a>)}</div></section></div></section></div>;
+}
+
+function AuthPanel({ mode, setMode, onClose, onAuthenticated }: { mode: 'login' | 'register'; setMode: (mode: 'login' | 'register') => void; onClose: () => void; onAuthenticated: (token: string, user: User) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setError(null);
+    const data = new FormData(event.currentTarget);
+    try {
+      const result = await api<{ token: string; user: User }>(`/v1/auth/${mode}`, { method: 'POST', body: JSON.stringify({ email: data.get('email'), password: data.get('password'), ...(mode === 'register' ? { displayName: data.get('displayName') || undefined } : {}) }) });
+      onAuthenticated(result.token, result.user);
+    } catch (caught) { setError(errorMessage(caught)); } finally { setBusy(false); }
+  }
+  return <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section className="authPanel" role="dialog" aria-modal="true" aria-labelledby="auth-title"><div className="panelHeader"><Brand /><button className="iconButton" onClick={onClose} aria-label="Cerrar" autoFocus><X /></button></div><div className="authCopy"><span className="sectionKicker">Tu búsqueda, siempre disponible</span><h2 id="auth-title">{mode === 'register' ? 'Creá tu espacio' : 'Volvé a tu espacio'}</h2><p>Guardá oportunidades, activá monitores y recibí cambios importantes sin perder el hilo.</p></div><form onSubmit={submit}>{mode === 'register' && <Field label="Nombre"><input name="displayName" minLength={2} autoComplete="name" placeholder="Cómo querés que te llamemos" /></Field>}<Field label="Email"><input name="email" type="email" required autoComplete="email" placeholder="vos@ejemplo.com" /></Field><Field label="Contraseña"><input name="password" type="password" required minLength={mode === 'register' ? 10 : 1} autoComplete={mode === 'register' ? 'new-password' : 'current-password'} placeholder={mode === 'register' ? 'Mínimo 10 caracteres' : 'Tu contraseña'} /></Field>{error && <p className="formError" role="alert">{error}</p>}<button className="primaryButton submitButton" disabled={busy}>{busy ? <><LoaderCircle className="spin" /> Un momento…</> : mode === 'register' ? 'Crear cuenta' : 'Ingresar'}</button></form><button className="modeSwitch" onClick={() => setMode(mode === 'register' ? 'login' : 'register')}>{mode === 'register' ? '¿Ya tenés cuenta? Ingresá' : '¿Primera vez? Creá tu cuenta'}</button></section></div>;
+}
+
+function PageHeading({ kicker, title, body, action }: { kicker: string; title: string; body: string; action?: React.ReactNode }) {
+  return <header className="pageHeading"><div><span className="sectionKicker">{kicker}</span><h1>{title}</h1><p>{body}</p></div>{action}</header>;
+}
+
+function EmptyState({ icon, title, body, action, onAction }: { icon: React.ReactNode; title: string; body: string; action?: string; onAction?: () => void }) {
+  return <div className="emptyState"><span>{icon}</span><h3>{title}</h3><p>{body}</p>{action && onAction && <button className="secondaryButton" onClick={onAction}>{action}</button>}</div>;
+}
+
+function LoadingState() {
+  return <div className="loadingState" role="status"><LoaderCircle className="spin" /><span>Reuniendo propiedades y publicaciones…</span></div>;
 }

@@ -142,3 +142,37 @@ export const publicationDtoSchema = z.object({
   lastVerifiedAt: nullableTimestampSchema
 }).strict();
 export type PublicationDto = z.infer<typeof publicationDtoSchema>;
+
+export const monitorDtoSchema = z.object({
+  id: z.string().uuid(),
+  name: nonEmptyTextSchema,
+  intentText: nonEmptyTextSchema,
+  criteria: searchCriteriaSchema,
+  cadence: z.enum(['hourly', 'daily', 'weekly']),
+  timezone: nonEmptyTextSchema,
+  instantExceptional: z.boolean(),
+  enabled: z.boolean(),
+  lastRunAt: nullableTimestampSchema,
+  nextRunAt: nullableTimestampSchema,
+  createdAt: timestampSchema
+}).strict();
+export type MonitorDto = z.infer<typeof monitorDtoSchema>;
+
+export const alertDtoSchema = z.object({
+  id: z.string().uuid(),
+  monitorId: z.string().uuid().nullable(),
+  type: nonEmptyTextSchema,
+  title: nonEmptyTextSchema,
+  body: nonEmptyTextSchema,
+  payload: z.record(z.string(), z.unknown()),
+  createdAt: timestampSchema,
+  readAt: nullableTimestampSchema
+}).strict();
+export type AlertDto = z.infer<typeof alertDtoSchema>;
+
+export const propertyHistoryEventDtoSchema = z.object({
+  type: nonEmptyTextSchema,
+  occurredAt: timestampSchema,
+  payload: z.record(z.string(), z.unknown())
+}).strict();
+export type PropertyHistoryEventDto = z.infer<typeof propertyHistoryEventDtoSchema>;
