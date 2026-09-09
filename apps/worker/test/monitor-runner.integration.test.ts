@@ -9,9 +9,11 @@ describe('monitor execution', { skip: !databaseUrl }, () => {
   let userId: string;
   let propertyId: string;
   let monitorId: string;
+  let location: string;
 
   before(async () => {
     const suffix = crypto.randomUUID();
+    location = `monitor-zone-${suffix}`;
     const user = await query<{ id: string }>(`
       INSERT INTO app_user (email, display_name)
       VALUES ($1, 'Monitor test') RETURNING id
@@ -21,16 +23,16 @@ describe('monitor execution', { skip: !databaseUrl }, () => {
       INSERT INTO property (
         canonical_address, normalized_address, operation, currency,
         canonical_price, rooms, area_total_m2, status, last_verified_at
-      ) VALUES ('Thames 1800, Palermo, Buenos Aires', 'thames 1800 palermo buenos aires',
+      ) VALUES ($1, $2,
         'sale', 'USD', 180000, 3, 72, 'active', now())
       RETURNING id
-    `);
+    `, [`Thames 1800, ${location}`, `thames 1800 ${location}`]);
     propertyId = property.rows[0]!.id;
     const monitor = await query<{ id: string }>(`
       INSERT INTO monitor (user_id, name, intent_text, criteria, cadence, next_run_at)
       VALUES ($1, 'Palermo', 'Comprar en Palermo', $2::jsonb, 'daily', now())
       RETURNING id
-    `, [userId, JSON.stringify({ operation: 'sale', locations: ['Palermo'], currency: 'USD', maxPrice: 200000 })]);
+    `, [userId, JSON.stringify({ operation: 'sale', locations: [location], currency: 'USD', maxPrice: 200000 })]);
     monitorId = monitor.rows[0]!.id;
   });
 

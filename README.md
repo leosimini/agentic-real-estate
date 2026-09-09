@@ -27,6 +27,8 @@ The primary object is a canonical property opportunity, not a source listing. Mu
 
 Intent interpretation defaults to local deterministic rules. To enable the OpenAI provider, set `AI_PROVIDER=openai` and provide `OPENAI_API_KEY` only to the API service. The browser never receives provider credentials, and every interpretation remains an editable draft until the user confirms it.
 
+Authenticated publishers can manage their own availability from Profile. Professional profiles begin in a pending state; bulk imports and aggregate-publication claims require an audited verification step. Approved claims create a new operator publication and preserve the original source attribution.
+
 If a default host port is occupied, override it without changing container networking, for example:
 
 ```sh

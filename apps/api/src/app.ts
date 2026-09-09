@@ -32,6 +32,7 @@ import {
   directPublicationInputSchema,
   IdempotencyConflictError
 } from './publications.js';
+import { registerOperatorRoutes } from './operator-routes.js';
 
 const emailSchema = z.string().trim().toLowerCase().email().max(320);
 const registerInputSchema = z.object({
@@ -566,14 +567,20 @@ export async function buildApp(config: ApiConfig = loadApiConfig()): Promise<Fas
         error: { code: 'invalid_idempotency_key', message: 'Idempotency-Key must contain 8 to 200 characters' }
       });
     }
-    const user = await query<{ display_name: string | null }>(
-      'SELECT display_name FROM app_user WHERE id = $1',
+    const user = await query<{ display_name: string | null; role: Principal['role']; operator_id: string | null; operator_name: string | null; verification_status: string | null }>(
+      `SELECT u.display_name, u.role, op.id AS operator_id, op.display_name AS operator_name, op.verification_status
+       FROM app_user u LEFT JOIN operator_profile op ON op.user_id=u.id WHERE u.id = $1`,
       [request.user.sub]
     );
+    const publisherType = user.rows[0]?.role === 'operator' && user.rows[0]?.verification_status === 'verified' ? 'operator' : 'owner';
     try {
       const result = await withTransaction((client) => createDirectPublication(client, {
         userId: request.user.sub,
-        displayName: user.rows[0]?.display_name ?? null,
+        displayName: publisherType === 'operator'
+          ? user.rows[0]?.operator_name ?? user.rows[0]?.display_name ?? null
+          : user.rows[0]?.display_name ?? null,
+        publisherType,
+        operatorProfileId: publisherType === 'operator' ? user.rows[0]?.operator_id ?? undefined : undefined,
         idempotencyKey,
         publicWebUrl: config.publicWebUrl,
         input: parsed.data
@@ -638,6 +645,8 @@ export async function buildApp(config: ApiConfig = loadApiConfig()): Promise<Fas
     if (!exists) return reply.code(404).send({ error: { code: 'not_found', message: 'Opportunity was not found' } });
     return reply.code(204).send();
   });
+
+  await registerOperatorRoutes(app, config);
 
   return app;
 }

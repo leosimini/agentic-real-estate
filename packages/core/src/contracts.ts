@@ -195,3 +195,49 @@ export const propertyHistoryEventDtoSchema = z.object({
   payload: z.record(z.string(), z.unknown())
 }).strict();
 export type PropertyHistoryEventDto = z.infer<typeof propertyHistoryEventDtoSchema>;
+
+export const operatorProfileDtoSchema = z.object({
+  id: z.string().uuid(),
+  displayName: nonEmptyTextSchema,
+  legalName: nonEmptyTextSchema.nullable(),
+  licenseNumber: nonEmptyTextSchema.nullable(),
+  websiteUrl: z.string().url().nullable(),
+  verificationStatus: z.enum(['pending', 'verified', 'rejected', 'suspended']),
+  verifiedAt: nullableTimestampSchema,
+  createdAt: timestampSchema
+}).strict();
+export type OperatorProfileDto = z.infer<typeof operatorProfileDtoSchema>;
+
+export const managedPublicationDtoSchema = publicationDtoSchema.extend({
+  address: nonEmptyTextSchema.nullable(),
+  propertyStatus: z.enum(['active', 'uncertain', 'inactive', 'sold', 'rented']),
+  declaredAvailability: z.enum(['available', 'reserved', 'sold', 'rented', 'unavailable', 'unknown']),
+  version: z.number().int().positive()
+}).strict();
+export type ManagedPublicationDto = z.infer<typeof managedPublicationDtoSchema>;
+
+export const listingClaimDtoSchema = z.object({
+  id: z.string().uuid(),
+  publicationId: z.string().uuid(),
+  propertyId: z.string().uuid(),
+  address: nonEmptyTextSchema.nullable(),
+  sourceName: nonEmptyTextSchema,
+  status: z.enum(['pending', 'approved', 'rejected', 'revoked']),
+  evidence: z.record(z.string(), z.unknown()),
+  reviewedAt: nullableTimestampSchema,
+  createdAt: timestampSchema
+}).strict();
+export type ListingClaimDto = z.infer<typeof listingClaimDtoSchema>;
+
+export const inquiryDtoSchema = z.object({
+  id: z.string().uuid(),
+  propertyId: z.string().uuid(),
+  publicationId: z.string().uuid(),
+  senderUserId: z.string().uuid(),
+  recipientUserId: z.string().uuid(),
+  message: nonEmptyTextSchema,
+  status: z.enum(['new', 'read', 'replied', 'closed']),
+  createdAt: timestampSchema,
+  updatedAt: timestampSchema
+}).strict();
+export type InquiryDto = z.infer<typeof inquiryDtoSchema>;

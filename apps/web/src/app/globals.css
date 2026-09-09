@@ -168,6 +168,27 @@ h1, h2, h3, p { text-wrap: pretty; }
 .trustGrid svg { color: var(--spruce); }
 .trustGrid h3 { margin: 13px 0 5px; font-family: Georgia, serif; font-weight: 500; }
 .trustGrid p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.professionalCard { margin-top: 22px; padding: 24px; border: 1px solid var(--line); background: var(--paper-deep); display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; }
+.professionalCard h2, .workspaceHeading h2 { margin: 0; font-family: Georgia, serif; font-size: 30px; font-weight: 500; }
+.professionalCard p, .workspaceHeading p, .mutedCopy { color: var(--muted); line-height: 1.5; }
+.professionalCard form { display: grid; gap: 12px; }
+.professionalWorkspace { margin-top: 22px; padding: 24px; border: 1px solid var(--line); background: var(--surface); }
+.workspaceHeading { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
+.workspaceHeading p { margin: 5px 0 0; }
+.verificationBadge { flex: none; padding: 7px 9px; border: 1px solid #d2a99a; background: var(--clay-soft); color: #68483d; font-size: 10px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.verificationBadge.verified { border-color: #adc4b5; background: #edf5ef; color: var(--spruce); }
+.operatorMetrics { margin: 22px 0 0; padding: 16px 0; border-block: 1px solid var(--line); display: grid; grid-template-columns: repeat(3,1fr); }
+.operatorMetrics span { padding-inline: 16px; color: var(--muted); font-size: 12px; }
+.operatorMetrics span + span { border-left: 1px solid var(--line); }
+.operatorMetrics strong { display: block; color: var(--ink); font-family: Georgia, serif; font-size: 25px; }
+.operatorColumns { margin-top: 24px; }
+.operatorColumns .subheading { display: flex; align-items: center; gap: 7px; }
+.managedCard, .inquiryCard { padding: 16px; border: 1px solid var(--line); background: var(--surface-strong); }
+.managedCard h4 { margin: 10px 0 4px; font-family: Georgia, serif; font-size: 19px; font-weight: 500; }
+.managedCard > p, .inquiryCard p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.managedActions { margin-top: 13px; display: flex; flex-wrap: wrap; gap: 6px; }
+.inquiryCard > span { color: var(--clay); font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.inquiryCard time { display: block; margin-top: 9px; color: var(--faint); font-size: 10px; }
 
 .overlay { position: fixed; inset: 0; z-index: 50; padding: 16px; background: rgba(8,19,15,.6); display: flex; justify-content: flex-end; }
 .detailPanel { width: min(620px, 100%); height: 100%; overflow: auto; background: var(--surface); box-shadow: var(--shadow); }
@@ -190,13 +211,18 @@ h1, h2, h3, p { text-wrap: pretty; }
 .sectionHeading.compact { margin-bottom: 10px; }
 .sectionHeading.compact h3 { margin: 0; font-family: Georgia, serif; font-size: 22px; font-weight: 500; }
 .sourceList { display: grid; gap: 8px; }
+.sourceCard { border: 1px solid var(--line); }
 .sourceList a { min-height: 65px; padding: 10px; border: 1px solid var(--line); color: inherit; text-decoration: none; display: grid; grid-template-columns: 38px minmax(0,1fr) auto auto; align-items: center; gap: 10px; }
+.sourceCard > a { border: 0; }
 .sourceList a:hover { border-color: var(--spruce); }
 .sourceIcon { width: 36px; height: 36px; background: var(--paper-deep); display: grid; place-items: center; color: var(--spruce); }
 .sourceList strong, .sourceList small { display: block; }
 .sourceList small { margin-top: 3px; color: var(--muted); font-size: 11px; }
 .sourceStatus { color: var(--clay); font-size: 10px; font-weight: 800; text-transform: uppercase; }
 .sourceStatus.active { color: #367c58; }
+.sourceAction { width: 100%; min-height: 42px; padding: 0 12px; border: 0; border-top: 1px solid var(--line); background: var(--paper-deep); color: var(--spruce); display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 12px; font-weight: 750; }
+.inquiryComposer { margin-top: 10px; padding: 14px; border: 1px solid var(--line); background: var(--paper-deep); }
+.inquiryComposer > div { margin-top: 10px; display: flex; justify-content: flex-end; gap: 8px; }
 
 .authPanel { width: min(460px, 100%); margin: auto; padding: 0 28px 27px; background: var(--surface); box-shadow: var(--shadow); }
 .authPanel .panelHeader { margin: 0 -28px; }
@@ -234,6 +260,7 @@ h1, h2, h3, p { text-wrap: pretty; }
   .pageHeading { display: block; }
   .pageHeading .primaryButton { margin-top: 20px; }
   .trustGrid { grid-template-columns: 1fr; }
+  .professionalCard { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 560px) {
@@ -258,6 +285,10 @@ h1, h2, h3, p { text-wrap: pretty; }
   .profileCard { grid-template-columns: 58px 1fr; }
   .largeAvatar { width: 58px; height: 58px; }
   .profileCard button { grid-column: 1 / -1; }
+  .professionalCard, .professionalWorkspace { padding: 18px; }
+  .workspaceHeading { display: block; }
+  .verificationBadge { display: inline-block; margin-top: 12px; }
+  .operatorMetrics span { padding-inline: 8px; }
   .overlay { padding: 0; }
   .detailPanel { width: 100%; }
   .detailContent { padding: 20px 16px; }

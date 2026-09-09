@@ -72,6 +72,8 @@ export async function createDirectPublication(
   options: {
     userId: string;
     displayName: string | null;
+    publisherType: 'owner' | 'operator';
+    operatorProfileId?: string;
     idempotencyKey: string;
     publicWebUrl: string;
     input: DirectPublicationInput;
@@ -141,7 +143,7 @@ export async function createDirectPublication(
     directUrl: `${options.publicWebUrl}/publications/${sourceListingId}`,
     fetchedAt: now,
     status: 'active',
-    statusEvidence: { kind: 'manual', observedAt: now, detail: 'Submitted by an authenticated publisher' },
+    statusEvidence: { kind: 'manual', observedAt: now, detail: `Submitted by an authenticated ${options.publisherType}` },
     raw: options.input,
     normalized: options.input
   });
@@ -219,16 +221,18 @@ export async function createDirectPublication(
   const publication = await client.query<PublicationResultRow>(`
     INSERT INTO publication (
       source_id, source_listing_id, source_url, property_id, publisher_type,
-      publisher_user_id, publisher_name, title, description, currency, price,
+      publisher_user_id, publisher_operator_profile_id, publisher_name, title, description, currency, price,
       raw_payload, publication_status, last_seen_at, last_verified_at
-    ) VALUES ($1,$2,$3,$4,'owner',$5,$6,$7,$8,$9,$10,$11::jsonb,'active',now(),now())
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,'active',now(),now())
     RETURNING id, property_id, source_listing_id, publication_status
   `, [
     sourceId,
     sourceListingId,
     snapshot.directUrl,
     propertyId,
+    options.publisherType,
     options.userId,
+    options.operatorProfileId ?? null,
     options.displayName,
     options.input.title ?? `${options.input.propertyType ?? 'Property'} in ${options.input.address}`,
     options.input.description ?? null,
@@ -241,7 +245,7 @@ export async function createDirectPublication(
   await client.query(`
     INSERT INTO publication_event (publication_id, snapshot_id, event_type, payload)
     VALUES ($1,$2,'published',$3::jsonb)
-  `, [created.id, snapshotId, JSON.stringify({ publisherType: 'owner' })]);
+  `, [created.id, snapshotId, JSON.stringify({ publisherType: options.publisherType })]);
   await client.query(`
     INSERT INTO property_event (property_id, event_type, payload)
     VALUES ($1,'publication_added',$2::jsonb)

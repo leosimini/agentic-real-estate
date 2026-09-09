@@ -2,6 +2,7 @@
 
 import {
   ArrowDownRight,
+  BadgeCheck,
   Bell,
   Bookmark,
   Building2,
@@ -15,6 +16,7 @@ import {
   FilePlus2,
   Heart,
   House,
+  Inbox,
   ListFilter,
   LoaderCircle,
   LogIn,
@@ -36,10 +38,13 @@ import {
   type Alert,
   type Currency,
   type IntentInterpretation,
+  type Inquiry,
+  type ManagedPublication,
   type Monitor,
   type Opportunity,
   type OpportunityDetail,
   type Operation,
+  type OperatorProfile,
   type SearchCriteria
 } from '../lib/api';
 
@@ -94,6 +99,9 @@ export default function Home() {
   const [saved, setSaved] = useState<Opportunity[]>([]);
   const [monitors, setMonitors] = useState<Monitor[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [operatorProfile, setOperatorProfile] = useState<OperatorProfile | null>(null);
+  const [managedPublications, setManagedPublications] = useState<ManagedPublication[]>([]);
+  const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [detail, setDetail] = useState<OpportunityDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
@@ -116,16 +124,25 @@ export default function Home() {
   }, [criteria]);
 
   const loadPrivateData = useCallback(async (currentToken: string) => {
-    const [me, monitorData, alertData, savedData] = await Promise.all([
+    const [me, monitorData, alertData, savedData, publicationData, inquiryData, profile] = await Promise.all([
       api<{ user: User }>('/v1/me', {}, currentToken),
       api<{ items: Monitor[] }>('/v1/monitors', {}, currentToken),
       api<{ items: Alert[] }>('/v1/alerts', {}, currentToken),
-      api<{ items: Opportunity[] }>('/v1/saved', {}, currentToken)
+      api<{ items: Opportunity[] }>('/v1/saved', {}, currentToken),
+      api<{ items: ManagedPublication[] }>('/v1/publications/mine', {}, currentToken),
+      api<{ items: Inquiry[] }>('/v1/inquiries', {}, currentToken),
+      api<OperatorProfile>('/v1/operators/profile', {}, currentToken).catch((error) => {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      })
     ]);
     setUser(me.user);
     setMonitors(monitorData.items);
     setAlerts(alertData.items);
     setSaved(savedData.items);
+    setManagedPublications(publicationData.items);
+    setInquiries(inquiryData.items);
+    setOperatorProfile(profile);
   }, []);
 
   useEffect(() => {
@@ -281,6 +298,61 @@ export default function Home() {
     }
   }
 
+  async function createOperatorProfile(input: { displayName: string; licenseNumber?: string; websiteUrl?: string }) {
+    if (!token) return setAuthOpen(true);
+    try {
+      const profile = await api<OperatorProfile>('/v1/operators/profile', {
+        method: 'POST', body: JSON.stringify(input)
+      }, token);
+      setOperatorProfile(profile);
+      setUser((current) => current ? { ...current, role: 'operator' } : current);
+      setNotice('Perfil profesional creado. La importación y los reclamos se habilitan después de verificar la matrícula.');
+    } catch (error) {
+      setNotice(errorMessage(error));
+    }
+  }
+
+  async function updateManagedPublication(publication: ManagedPublication, update: { status?: 'active' | 'paused' | 'removed'; declaredAvailability?: ManagedPublication['declaredAvailability'] }) {
+    if (!token) return;
+    try {
+      const changed = await api<ManagedPublication>(`/v1/publications/${publication.id}`, {
+        method: 'PATCH', headers: { 'if-match': String(publication.version) }, body: JSON.stringify(update)
+      }, token);
+      setManagedPublications((current) => current.map((item) => item.id === changed.id ? changed : item));
+      setNotice('Publicación actualizada con historial y auditoría.');
+    } catch (error) {
+      setNotice(errorMessage(error));
+    }
+  }
+
+  async function sendInquiry(publicationId: string, message: string) {
+    if (!token) return setAuthOpen(true);
+    if (!detail) return;
+    try {
+      await api<Inquiry>('/v1/inquiries', {
+        method: 'POST', body: JSON.stringify({ propertyId: detail.opportunity.id, publicationId, message })
+      }, token);
+      setNotice('Consulta enviada al responsable de esa publicación.');
+    } catch (error) {
+      setNotice(errorMessage(error));
+    }
+  }
+
+  async function claimPublication(publicationId: string) {
+    if (!token) return setAuthOpen(true);
+    try {
+      await api('/v1/operators/claims', {
+        method: 'POST', body: JSON.stringify({
+          publicationId,
+          evidence: { licenseNumber: operatorProfile?.licenseNumber, statement: 'Solicitado por el operador autenticado' }
+        })
+      }, token);
+      setNotice('Reclamo enviado para revisión. La publicación original conserva su atribución.');
+    } catch (error) {
+      setNotice(errorMessage(error));
+    }
+  }
+
   function onAuthenticated(nextToken: string, nextUser: User) {
     window.localStorage.setItem('agentic-real-estate-token', nextToken);
     setToken(nextToken);
@@ -297,6 +369,9 @@ export default function Home() {
     setMonitors([]);
     setAlerts([]);
     setSaved([]);
+    setOperatorProfile(null);
+    setManagedPublications([]);
+    setInquiries([]);
     setActiveTab('discover');
   }
 
@@ -344,7 +419,7 @@ export default function Home() {
         {activeTab === 'monitors' && <Monitors monitors={monitors} alerts={alerts} authenticated={Boolean(token)} onToggle={toggleMonitor} onRead={markRead} onDiscover={() => setActiveTab('discover')} />}
         {activeTab === 'publish' && <Publish token={token} onNeedAuth={() => setAuthOpen(true)} onNotice={setNotice} />}
         {activeTab === 'saved' && <Saved items={saved} authenticated={Boolean(token)} onOpen={openDetail} onRemove={toggleSaved} onDiscover={() => setActiveTab('discover')} />}
-        {activeTab === 'profile' && <Profile user={user} onLogin={() => setAuthOpen(true)} onLogout={logout} />}
+        {activeTab === 'profile' && <Profile user={user} operatorProfile={operatorProfile} publications={managedPublications} inquiries={inquiries} onLogin={() => setAuthOpen(true)} onLogout={logout} onCreateOperator={createOperatorProfile} onUpdatePublication={updateManagedPublication} />}
       </main>
 
       <nav className="bottomNav" aria-label="Navegación principal">
@@ -355,7 +430,7 @@ export default function Home() {
         <NavButton tab="profile" label="Vos" icon={<CircleUserRound />} active={activeTab} onSelect={selectTab} />
       </nav>
 
-      {detail && <DetailPanel detail={detail} isSaved={savedIds.has(detail.opportunity.id)} onClose={() => setDetail(null)} onSave={() => toggleSaved(detail.opportunity)} />}
+      {detail && <DetailPanel detail={detail} isSaved={savedIds.has(detail.opportunity.id)} operatorProfile={operatorProfile} authenticated={Boolean(token)} onClose={() => setDetail(null)} onSave={() => toggleSaved(detail.opportunity)} onInquiry={sendInquiry} onClaim={claimPublication} onNeedAuth={() => setAuthOpen(true)} />}
       {authOpen && <AuthPanel mode={authMode} setMode={setAuthMode} onClose={() => setAuthOpen(false)} onAuthenticated={onAuthenticated} />}
     </div>
   );
@@ -535,13 +610,70 @@ function Publish({ token, onNeedAuth, onNotice }: { token: string | null; onNeed
   return <section className="pageSection publishPage"><PageHeading kicker="Publicación directa" title="Publicá lo esencial" body="Empezá con los datos que definen la oportunidad. La trazabilidad queda visible y cualquier posible duplicado pasa a revisión." /><form className="publishForm" onSubmit={submit}><Field label="Dirección completa"><input name="address" required minLength={4} placeholder="Ej. Aráoz 1840, 4° B, Palermo" /></Field><div className="formRow"><Field label="Operación"><select name="operation"><option value="sale">Venta</option><option value="rent">Alquiler</option></select></Field><Field label="Tipo"><select name="propertyType"><option>Departamento</option><option>Casa</option><option>PH</option><option>Terreno</option></select></Field></div><div className="formRow"><Field label="Moneda"><select name="currency"><option>USD</option><option>ARS</option></select></Field><Field label="Precio"><input name="price" type="number" min="1" required placeholder="180000" /></Field></div><div className="formRow"><Field label="Ambientes"><input name="rooms" type="number" min="1" placeholder="3" /></Field><Field label="Superficie total"><input name="area" type="number" min="1" step="0.1" placeholder="72" /></Field></div><Field label="Descripción opcional"><textarea name="description" rows={4} maxLength={10000} placeholder="Estado, orientación, expensas y aquello que una visita debería saber." /></Field><div className="publishAssurance"><ShieldCheck /><span><strong>Control antes que velocidad.</strong> No fusionamos propiedades dudosas automáticamente.</span></div><button className="primaryButton submitButton" disabled={submitting}>{submitting ? <><LoaderCircle className="spin" /> Publicando…</> : <><FilePlus2 /> Publicar oportunidad</>}</button></form></section>;
 }
 
-function Profile({ user, onLogin, onLogout }: { user: User | null; onLogin: () => void; onLogout: () => void }) {
-  return <section className="pageSection"><PageHeading kicker="Cuenta y confianza" title={user?.displayName ?? 'Tu espacio'} body={user ? user.email : 'Creá una cuenta para conservar búsquedas, guardados y alertas.'} /><div className="profileCard"><span className="largeAvatar">{user?.displayName?.[0] ?? user?.email[0]?.toUpperCase() ?? '?'}</span><div><h2>{user ? 'Sesión activa' : 'Todavía no ingresaste'}</h2><p>{user ? 'Tus datos y acciones están aislados de otras cuentas.' : 'Sólo pedimos lo necesario para guardar tu actividad.'}</p></div><button className={user ? 'secondaryButton' : 'primaryButton'} onClick={user ? onLogout : onLogin}>{user ? 'Cerrar sesión' : 'Ingresar'}</button></div><div className="trustGrid"><article><ShieldCheck /><h3>Decisiones explicables</h3><p>La fuente, frescura y confianza quedan visibles.</p></article><article><Eye /><h3>Tu señal, sin ruido</h3><p>Los monitores suprimen cambios que no importan.</p></article><article><MessageCircle /><h3>IA bajo tu control</h3><p>Los criterios inferidos siempre se pueden editar.</p></article></div></section>;
+type ProfileProps = {
+  user: User | null;
+  operatorProfile: OperatorProfile | null;
+  publications: ManagedPublication[];
+  inquiries: Inquiry[];
+  onLogin: () => void;
+  onLogout: () => void;
+  onCreateOperator: (input: { displayName: string; licenseNumber?: string; websiteUrl?: string }) => void;
+  onUpdatePublication: (publication: ManagedPublication, update: { status?: 'active' | 'paused' | 'removed'; declaredAvailability?: ManagedPublication['declaredAvailability'] }) => void;
+};
+
+function Profile(props: ProfileProps) {
+  function submitOperator(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    props.onCreateOperator({
+      displayName: String(data.get('displayName') ?? ''),
+      licenseNumber: String(data.get('licenseNumber') ?? '') || undefined,
+      websiteUrl: String(data.get('websiteUrl') ?? '') || undefined
+    });
+  }
+  return <section className="pageSection">
+    <PageHeading kicker="Cuenta y confianza" title={props.user?.displayName ?? 'Tu espacio'} body={props.user ? props.user.email : 'Creá una cuenta para conservar búsquedas, guardados y alertas.'} />
+    <div className="profileCard"><span className="largeAvatar">{props.user?.displayName?.[0] ?? props.user?.email[0]?.toUpperCase() ?? '?'}</span><div><h2>{props.user ? 'Sesión activa' : 'Todavía no ingresaste'}</h2><p>{props.user ? 'Tus datos y acciones están aislados de otras cuentas.' : 'Sólo pedimos lo necesario para guardar tu actividad.'}</p></div><button className={props.user ? 'secondaryButton' : 'primaryButton'} onClick={props.user ? props.onLogout : props.onLogin}>{props.user ? 'Cerrar sesión' : 'Ingresar'}</button></div>
+    {props.user && !props.operatorProfile && <section className="professionalCard"><div><span className="sectionKicker"><BadgeCheck size={15} /> Espacio profesional</span><h2>¿Trabajás con propiedades?</h2><p>Creá un perfil para gestionar inventario, solicitar la representación de publicaciones agregadas y recibir consultas sin desviar contactos a terceros.</p></div><form onSubmit={submitOperator}><Field label="Nombre comercial"><input name="displayName" required minLength={2} defaultValue={props.user.displayName ?? ''} /></Field><Field label="Matrícula"><input name="licenseNumber" placeholder="Ej. CPI 1234" /></Field><Field label="Sitio web"><input name="websiteUrl" type="url" placeholder="https://" /></Field><button className="primaryButton">Crear perfil profesional</button></form></section>}
+    {props.operatorProfile && <section className="professionalWorkspace"><div className="workspaceHeading"><div><span className="sectionKicker"><BadgeCheck size={15} /> Operador</span><h2>{props.operatorProfile.displayName}</h2><p>{props.operatorProfile.licenseNumber ?? 'Matrícula no informada'}</p></div><span className={`verificationBadge ${props.operatorProfile.verificationStatus}`}>{verificationLabel(props.operatorProfile.verificationStatus)}</span></div><div className="operatorMetrics"><span><strong>{props.publications.length}</strong> publicaciones</span><span><strong>{props.publications.filter((item) => item.status === 'active').length}</strong> activas</span><span><strong>{props.inquiries.filter((item) => item.status === 'new').length}</strong> consultas nuevas</span></div><div className="twoColumn operatorColumns"><div><h3 className="subheading">Mis publicaciones</h3>{props.publications.length ? <div className="stack">{props.publications.map((publication) => <article className="managedCard" key={publication.id}><span className="monitorStatus"><span className={publication.status === 'active' ? 'statusDot active' : 'statusDot'} />{publication.status === 'active' ? 'Activa' : publication.status === 'paused' ? 'En pausa' : 'Retirada'}</span><h4>{publication.address ?? publication.title}</h4><p>{formatMoney(publication.price, publication.currency)} · versión {publication.version}</p><div className="managedActions"><button className="secondaryButton" onClick={() => props.onUpdatePublication(publication, { status: publication.status === 'active' ? 'paused' : 'active', declaredAvailability: publication.status === 'active' ? 'unavailable' : 'available' })}>{publication.status === 'active' ? 'Pausar' : 'Reactivar'}</button><button className="quietButton" onClick={() => props.onUpdatePublication(publication, { status: 'removed', declaredAvailability: publication.propertyStatus === 'rented' ? 'rented' : 'sold' })}>Marcar cerrada</button></div></article>)}</div> : <p className="mutedCopy">Tus publicaciones directas y las representaciones aprobadas aparecerán acá.</p>}</div><div><h3 className="subheading"><Inbox size={18} /> Consultas recibidas</h3>{props.inquiries.length ? <div className="stack">{props.inquiries.map((inquiry) => <article className="inquiryCard" key={inquiry.id}><span>{inquiry.status === 'new' ? 'Nueva' : 'En seguimiento'}</span><p>{inquiry.message}</p><time>{formatDate(inquiry.createdAt)}</time></article>)}</div> : <p className="mutedCopy">Todavía no recibiste consultas.</p>}</div></div></section>}
+    <div className="trustGrid"><article><ShieldCheck /><h3>Decisiones explicables</h3><p>La fuente, frescura y confianza quedan visibles.</p></article><article><Eye /><h3>Tu señal, sin ruido</h3><p>Los monitores suprimen cambios que no importan.</p></article><article><MessageCircle /><h3>IA bajo tu control</h3><p>Los criterios inferidos siempre se pueden editar.</p></article></div>
+  </section>;
 }
 
-function DetailPanel({ detail, isSaved, onClose, onSave }: { detail: OpportunityDetail; isSaved: boolean; onClose: () => void; onSave: () => void }) {
+function verificationLabel(status: OperatorProfile['verificationStatus']): string {
+  if (status === 'verified') return 'Verificado';
+  if (status === 'pending') return 'Verificación pendiente';
+  if (status === 'suspended') return 'Suspendido';
+  return 'No verificado';
+}
+
+type DetailPanelProps = {
+  detail: OpportunityDetail;
+  isSaved: boolean;
+  operatorProfile: OperatorProfile | null;
+  authenticated: boolean;
+  onClose: () => void;
+  onSave: () => void;
+  onInquiry: (publicationId: string, message: string) => void;
+  onClaim: (publicationId: string) => void;
+  onNeedAuth: () => void;
+};
+
+function DetailPanel({ detail, isSaved, operatorProfile, authenticated, onClose, onSave, onInquiry, onClaim, onNeedAuth }: DetailPanelProps) {
+  const [inquiryFor, setInquiryFor] = useState<string | null>(null);
   const item = detail.opportunity;
-  return <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section className="detailPanel" role="dialog" aria-modal="true" aria-labelledby="detail-title"><div className="panelHeader"><span>Oportunidad canónica</span><button className="iconButton" onClick={onClose} aria-label="Cerrar detalle" autoFocus><X /></button></div><div className="detailMedia"><Building2 size={58} strokeWidth={1.1} /><span>Consultá las fotos en cada publicación de origen</span></div><div className="detailContent"><div className="detailLead"><div><span className="freshness"><Clock3 size={14} />{freshnessLabel(item.freshness)}</span><h2 id="detail-title">{formatMoney(item.price, item.currency)}</h2><p>{item.address}</p></div><button className={`saveButton ${isSaved ? 'saved' : ''}`} onClick={onSave} aria-label={isSaved ? 'Quitar de guardados' : 'Guardar oportunidad'}><Heart fill={isSaved ? 'currentColor' : 'none'} /><span>{isSaved ? 'Guardada' : 'Guardar'}</span></button></div><div className="detailFacts"><span><strong>{item.rooms ?? '—'}</strong> ambientes</span><span><strong>{item.areaTotalM2 ?? '—'}</strong> m² totales</span><span><strong>{item.publicationCount}</strong> fuentes</span></div><section className="evidenceBlock"><span className="sectionKicker">Por qué verla</span><h3>Una sola propiedad, toda la evidencia</h3><p>Consolidamos las publicaciones vinculadas sin ocultar quién publicó, cuándo se verificó ni qué precio informa cada fuente.</p></section><section><div className="sectionHeading compact"><div><span className="sectionKicker">Proveniencia</span><h3>Publicaciones de origen</h3></div></div><div className="sourceList">{detail.publications.map((publication) => <a key={publication.id} href={publication.sourceUrl} target="_blank" rel="noreferrer"><span className="sourceIcon"><Building2 size={18} /></span><span><strong>{publication.sourceName}</strong><small>{publication.publisherName ?? (publication.publisherType === 'owner' ? 'Dueño directo' : 'Publicación agregada')} · {formatMoney(publication.price, publication.currency)}</small></span><span className={`sourceStatus ${publication.status}`}>{publication.status === 'active' ? 'Activa' : 'Revisar'}</span><ChevronRight size={17} /></a>)}</div></section></div></section></div>;
+  function startInquiry(publicationId: string) {
+    if (!authenticated) return onNeedAuth();
+    setInquiryFor(publicationId);
+  }
+  function submitInquiry(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!inquiryFor) return;
+    const data = new FormData(event.currentTarget);
+    onInquiry(inquiryFor, String(data.get('message') ?? ''));
+    setInquiryFor(null);
+  }
+  return <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section className="detailPanel" role="dialog" aria-modal="true" aria-labelledby="detail-title"><div className="panelHeader"><span>Oportunidad canónica</span><button className="iconButton" onClick={onClose} aria-label="Cerrar detalle" autoFocus><X /></button></div><div className="detailMedia"><Building2 size={58} strokeWidth={1.1} /><span>Consultá las fotos en cada publicación de origen</span></div><div className="detailContent"><div className="detailLead"><div><span className="freshness"><Clock3 size={14} />{freshnessLabel(item.freshness)}</span><h2 id="detail-title">{formatMoney(item.price, item.currency)}</h2><p>{item.address}</p></div><button className={`saveButton ${isSaved ? 'saved' : ''}`} onClick={onSave} aria-label={isSaved ? 'Quitar de guardados' : 'Guardar oportunidad'}><Heart fill={isSaved ? 'currentColor' : 'none'} /><span>{isSaved ? 'Guardada' : 'Guardar'}</span></button></div><div className="detailFacts"><span><strong>{item.rooms ?? '—'}</strong> ambientes</span><span><strong>{item.areaTotalM2 ?? '—'}</strong> m² totales</span><span><strong>{item.publicationCount}</strong> fuentes</span></div><section className="evidenceBlock"><span className="sectionKicker">Por qué verla</span><h3>Una sola propiedad, toda la evidencia</h3><p>Consolidamos las publicaciones vinculadas sin ocultar quién publicó, cuándo se verificó ni qué precio informa cada fuente.</p></section><section><div className="sectionHeading compact"><div><span className="sectionKicker">Proveniencia</span><h3>Publicaciones de origen</h3></div></div><div className="sourceList">{detail.publications.map((publication) => <article className="sourceCard" key={publication.id}><a href={publication.sourceUrl} target="_blank" rel="noreferrer"><span className="sourceIcon"><Building2 size={18} /></span><span><strong>{publication.sourceName}</strong><small>{publication.publisherName ?? (publication.publisherType === 'owner' ? 'Dueño directo' : 'Publicación agregada')} · {formatMoney(publication.price, publication.currency)}</small></span><span className={`sourceStatus ${publication.status}`}>{publication.status === 'active' ? 'Activa' : 'Revisar'}</span><ChevronRight size={17} /></a>{publication.status === 'active' && publication.publisherType !== 'aggregated' && <button className="sourceAction" onClick={() => startInquiry(publication.id)}><MessageCircle size={16} /> Consultar a esta fuente</button>}{publication.publisherType === 'aggregated' && operatorProfile?.verificationStatus === 'verified' && <button className="sourceAction" onClick={() => onClaim(publication.id)}><BadgeCheck size={16} /> Solicitar representación</button>}</article>)}</div>{inquiryFor && <form className="inquiryComposer" onSubmit={submitInquiry}><Field label="Tu consulta"><textarea name="message" required minLength={10} maxLength={4000} rows={3} autoFocus placeholder="Quisiera conocer disponibilidad y coordinar una visita." /></Field><div><button type="button" className="quietButton" onClick={() => setInquiryFor(null)}>Cancelar</button><button className="primaryButton">Enviar consulta</button></div></form>}</section></div></section></div>;
 }
 
 function AuthPanel({ mode, setMode, onClose, onAuthenticated }: { mode: 'login' | 'register'; setMode: (mode: 'login' | 'register') => void; onClose: () => void; onAuthenticated: (token: string, user: User) => void }) {

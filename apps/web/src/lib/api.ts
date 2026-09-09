@@ -44,6 +44,8 @@ export type Opportunity = {
 
 export type Publication = {
   id: string;
+  title?: string | null;
+  description?: string | null;
   sourceName: string;
   sourceUrl: string;
   publisherType: 'owner' | 'operator' | 'aggregated' | null;
@@ -83,6 +85,37 @@ export type Alert = {
   payload: Record<string, unknown>;
   createdAt: string;
   readAt: string | null;
+};
+
+export type OperatorProfile = {
+  id: string;
+  displayName: string;
+  legalName: string | null;
+  licenseNumber: string | null;
+  websiteUrl: string | null;
+  verificationStatus: 'pending' | 'verified' | 'rejected' | 'suspended';
+  verifiedAt: string | null;
+  createdAt: string;
+};
+
+export type ManagedPublication = Publication & {
+  propertyId: string;
+  address: string | null;
+  propertyStatus: 'active' | 'uncertain' | 'inactive' | 'sold' | 'rented';
+  declaredAvailability: 'available' | 'reserved' | 'sold' | 'rented' | 'unavailable' | 'unknown';
+  version: number;
+};
+
+export type Inquiry = {
+  id: string;
+  propertyId: string;
+  publicationId: string;
+  senderUserId: string;
+  recipientUserId: string;
+  message: string;
+  status: 'new' | 'read' | 'replied' | 'closed';
+  createdAt: string;
+  updatedAt: string;
 };
 
 type ApiErrorBody = { error?: { code?: string; message?: string } };
