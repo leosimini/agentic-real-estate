@@ -5,9 +5,15 @@ test('mobile discovery shell is responsive and has no serious accessibility viol
   await page.setViewportSize({ width: 360, height: 800 });
   await page.goto('/');
   await page.waitForLoadState('networkidle');
-  await expect(page.getByRole('heading', { name: /Tu próxima propiedad/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Encontrá un lugar/ })).toBeVisible();
+  await expect(page.getByRole('img', { name: /Casa contemporánea abierta a un patio en Mendoza/ })).toBeVisible();
+  await expect(page.locator('.heroVisual').getByText('Imagen de referencia', { exact: true })).toBeVisible();
   const bounds = await page.evaluate(() => ({ viewport: window.innerWidth, document: document.documentElement.scrollWidth }));
   expect(bounds.document).toBe(bounds.viewport);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const transitionDuration = await page.locator('.heroVisual img').evaluate((element) => getComputedStyle(element).transitionDuration);
+  const transitionMs = transitionDuration.endsWith('ms') ? Number.parseFloat(transitionDuration) : Number.parseFloat(transitionDuration) * 1000;
+  expect(transitionMs).toBeLessThanOrEqual(0.02);
   const accessibility = await new AxeBuilder({ page }).analyze();
   expect(accessibility.violations.filter((violation) => ['serious', 'critical'].includes(violation.impact ?? ''))).toEqual([]);
 });
@@ -43,6 +49,6 @@ test('account session is HttpOnly, survives reload, and is removed on logout', a
   await page.getByRole('button', { name: 'Vos' }).click();
   await expect(page.getByRole('heading', { name: 'Sesión activa' })).toBeVisible();
   await page.getByRole('button', { name: 'Cerrar sesión' }).click();
-  await expect(page.getByRole('heading', { name: /Tu próxima propiedad/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Encontrá un lugar/ })).toBeVisible();
   expect((await context.cookies()).find((cookie) => cookie.name === 'umbral_session')).toBeUndefined();
 });

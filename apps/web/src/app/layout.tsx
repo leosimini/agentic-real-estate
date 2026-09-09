@@ -2,7 +2,7 @@ import './globals.css';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Umbral — tu búsqueda inmobiliaria, siempre activa',
+  title: 'Umbral · tu búsqueda inmobiliaria, siempre activa',
   description: 'Oportunidades inmobiliarias sin duplicados, con fuentes visibles y monitores que siguen buscando por vos.'
 };
 

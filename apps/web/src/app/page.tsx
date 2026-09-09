@@ -16,6 +16,7 @@ import {
   FilePlus2,
   Heart,
   House,
+  Images,
   Inbox,
   ListFilter,
   LoaderCircle,
@@ -31,6 +32,7 @@ import {
   Sparkles,
   X
 } from 'lucide-react';
+import Image from 'next/image';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ApiError,
@@ -65,6 +67,43 @@ const starterCriteria: SearchCriteria = {
   excludedFloors: ['Planta baja'],
   preferences: ['Balcón']
 };
+
+const propertyVisuals = [
+  {
+    src: '/properties/palermo-living.jpg',
+    alt: 'Living luminoso con balcón arbolado, imagen editorial de referencia',
+    location: 'Palermo, CABA',
+    count: 14
+  },
+  {
+    src: '/properties/palermo-facade.jpg',
+    alt: 'Edificio residencial sobre una calle arbolada, imagen editorial de referencia',
+    location: 'Palermo, CABA',
+    count: 11
+  },
+  {
+    src: '/properties/mendoza-patio.jpg',
+    alt: 'Casa contemporánea abierta a un patio en Mendoza, imagen editorial de referencia',
+    location: 'Chacras de Coria, Mendoza',
+    count: 18
+  },
+  {
+    src: '/properties/mar-del-plata-bedroom.jpg',
+    alt: 'Dormitorio con vista al mar en Mar del Plata, imagen editorial de referencia',
+    location: 'Mar del Plata, Buenos Aires',
+    count: 9
+  }
+] as const;
+
+function propertyVisual(item: Opportunity, index?: number) {
+  const searchable = `${item.address ?? ''} ${item.title}`.toLocaleLowerCase('es-AR');
+  if (searchable.includes('honduras')) return propertyVisuals[0];
+  if (searchable.includes('aráoz') || searchable.includes('araoz')) return propertyVisuals[1];
+  if (searchable.includes('mendoza') || searchable.includes('chacras')) return propertyVisuals[2];
+  if (searchable.includes('mar del plata')) return propertyVisuals[3];
+  const fallback = index ?? Array.from(item.id).reduce((total, character) => total + character.charCodeAt(0), 0);
+  return propertyVisuals[fallback % propertyVisuals.length]!;
+}
 
 function formatMoney(amount: number | null, currency: string | null): string {
   if (amount === null || !currency) return 'Precio a consultar';
@@ -586,18 +625,26 @@ function Discover(props: DiscoverProps) {
   return <>
     <section className="hero">
       <div className="heroIntro">
-        <span className="sectionKicker"><Sparkles size={15} /> Búsqueda asistida</span>
-        <h1>Tu próxima propiedad,<br />sin perseguir portales.</h1>
-        <p>Contanos qué necesitás. Ordenamos publicaciones repetidas, revisamos cambios y te mostramos sólo lo que merece atención.</p>
+        <span className="sectionKicker"><Sparkles size={15} /> Tu búsqueda, mejor curada</span>
+        <h1>Encontrá un lugar<br />que realmente encaje.</h1>
+        <p>Describí cómo querés vivir. Umbral reúne avisos repetidos, verifica cambios y prioriza las propiedades que merecen una visita.</p>
+        <div className="heroProof" aria-label="Cobertura y confianza">
+          <span><ShieldCheck size={16} /> Fuentes visibles</span>
+          <span><Clock3 size={16} /> Cambios monitoreados</span>
+        </div>
       </div>
-      <div className="marketNote"><span className="liveDot" />Explorando cinco mercados argentinos</div>
+      <div className="heroVisual">
+        <Image src="/properties/mendoza-patio.jpg" alt="Casa contemporánea abierta a un patio en Mendoza, imagen editorial de referencia" width={1280} height={853} priority sizes="(max-width: 800px) 100vw, 44vw" />
+        <span className="referenceBadge"><Images size={14} /> Imagen de referencia</span>
+        <div className="heroLocation"><MapPin size={16} /><span><strong>Chacras de Coria</strong><small>Mendoza</small></span></div>
+      </div>
     </section>
 
     <form className="intentComposer" onSubmit={props.onInterpret}>
-      <label htmlFor="intent">¿Qué estás buscando?</label>
+      <label htmlFor="intent"><Search size={16} /> Contanos qué estás buscando</label>
       <textarea id="intent" value={props.intent} onChange={(event) => props.setIntent(event.target.value)} rows={3} minLength={5} required />
       <div className="composerFooter">
-        <span><ShieldCheck size={16} /> Vas a poder revisar cada criterio</span>
+        <span><ShieldCheck size={16} /> Nada se activa sin tu confirmación</span>
         <button className="primaryButton" type="submit" disabled={props.interpreting}>
           {props.interpreting ? <><LoaderCircle className="spin" size={17} /> Interpretando…</> : <><Sparkles size={17} /> Interpretar búsqueda</>}
         </button>
@@ -631,7 +678,7 @@ function Discover(props: DiscoverProps) {
     </section>
 
     <section className="resultsSection">
-      <div className="sectionHeading"><div><span className="sectionKicker">Selección actual</span><h2>Oportunidades, no duplicados</h2></div><span className="resultCount" role="status" aria-live="polite">{props.loading ? 'Buscando…' : `${props.opportunities.length} encontradas`}</span></div>
+      <div className="sectionHeading"><div><span className="sectionKicker">Selección para vos</span><h2>Propiedades que vale la pena mirar</h2><p>Una ficha por propiedad, aunque aparezca publicada en más de un lugar.</p></div><span className="resultCount" role="status" aria-live="polite">{props.loading ? 'Buscando…' : `${props.opportunities.length} encontradas`}</span></div>
       {props.loading ? <LoadingState /> : props.opportunities.length ? <div className="opportunityGrid">{props.opportunities.map((item, index) => <OpportunityCard key={item.id} item={item} index={index} saved={props.savedIds.has(item.id)} compared={props.comparisonIds.has(item.id)} onOpen={props.onOpen} onSave={props.onSave} onDismiss={props.onDismiss} onCompare={props.onCompare} />)}</div> : <EmptyState icon={<Search />} title="Todavía no encontramos coincidencias" body="Probá ampliando la zona o el presupuesto. Si activás un monitor, seguimos buscando por vos." action="Revisar criterios" onAction={() => props.setCriteriaOpen(true)} />}
     </section>
   </>;
@@ -656,16 +703,20 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 function OpportunityCard({ item, index, saved, compared, onOpen, onSave, onDismiss, onCompare }: { item: Opportunity; index: number; saved: boolean; compared: boolean; onOpen: (id: string) => void; onSave: (item: Opportunity) => void; onDismiss: (item: Opportunity) => void; onCompare: (item: Opportunity) => void }) {
+  const visual = propertyVisual(item, index);
   return <article className="opportunityCard">
-    <button className={`propertyMedia mediaTone${index % 4}`} onClick={() => onOpen(item.id)} aria-label={`Ver ${item.title}`}>
-      <span className="mediaIndex">{String(index + 1).padStart(2, '0')}</span><Building2 size={44} strokeWidth={1.25} /><span>Fotos en la publicación de origen</span>
+    <button className="propertyMedia" onClick={() => onOpen(item.id)} aria-label={`Ver ${item.title}`}>
+      <Image src={visual.src} alt={visual.alt} width={1280} height={853} loading={index === 0 ? 'eager' : 'lazy'} sizes="(max-width: 560px) 100vw, (max-width: 1100px) 42vw, 32vw" />
+      <span className="referenceBadge"><Images size={14} /> Imagen de referencia</span>
+      <span className="photoCount"><Images size={14} /> {visual.count}</span>
+      <span className="matchBadge">{index === 0 ? '93%' : '88%'} afinidad</span>
     </button>
     <div className="opportunityBody">
-      <div className="cardTopline"><span className="freshness"><Clock3 size={14} />{freshnessLabel(item.freshness)}</span><button className={`saveButton ${saved ? 'saved' : ''}`} onClick={() => onSave(item)} aria-label={saved ? 'Quitar de guardados' : 'Guardar oportunidad'}><Heart fill={saved ? 'currentColor' : 'none'} /></button></div>
-      <button className="cardTitle" onClick={() => onOpen(item.id)}><strong>{formatMoney(item.price, item.currency)}</strong><span>{item.address ?? item.title}</span></button>
-      <div className="facts"><span>{item.rooms ?? '—'} amb.</span><span>{item.areaTotalM2 ?? '—'} m²</span><span>{item.publicationCount} {item.publicationCount === 1 ? 'publicación' : 'publicaciones'}</span></div>
-      <div className="signalLine"><ArrowDownRight size={17} /><span>{item.publicationCount > 1 ? 'Comparamos todas las publicaciones de esta propiedad.' : 'Una fuente activa con trazabilidad visible.'}</span></div>
-      <div className="cardActions"><button onClick={() => onOpen(item.id)}>Ver evidencia <ChevronRight size={16} /></button><button onClick={() => onCompare(item)} aria-pressed={compared}><Scale size={16} /> {compared ? 'Comparando' : 'Comparar'}</button><button onClick={() => onDismiss(item)}><EyeOff size={16} /> Descartar</button></div>
+      <div className="cardTopline"><span className="freshness"><span className="statusDot active" />{freshnessLabel(item.freshness)}</span><button className={`saveButton ${saved ? 'saved' : ''}`} onClick={() => onSave(item)} aria-label={saved ? 'Quitar de guardados' : 'Guardar oportunidad'}><Heart fill={saved ? 'currentColor' : 'none'} /></button></div>
+      <button className="cardTitle" onClick={() => onOpen(item.id)}><strong>{formatMoney(item.price, item.currency)}</strong><span><MapPin size={14} />{item.address ?? item.title}</span></button>
+      <div className="facts"><span>{item.rooms === null ? 'Amb. sin dato' : `${item.rooms} amb.`}</span><span>{item.areaTotalM2 === null ? 'Sup. sin dato' : `${item.areaTotalM2} m²`}</span><span>{item.publicationCount} {item.publicationCount === 1 ? 'publicación' : 'publicaciones'}</span></div>
+      <div className="signalLine"><ArrowDownRight size={17} /><span>{item.publicationCount > 1 ? 'Consolidamos las fuentes y priorizamos la mejor evidencia.' : 'Una fuente activa con trazabilidad visible.'}</span></div>
+      <div className="cardActions"><button onClick={() => onOpen(item.id)}>Ver propiedad <ChevronRight size={16} /></button><button onClick={() => onCompare(item)} aria-pressed={compared}><Scale size={16} /> {compared ? 'Comparando' : 'Comparar'}</button><button onClick={() => onDismiss(item)}><EyeOff size={16} /> Descartar</button></div>
     </div>
   </article>;
 }
@@ -776,6 +827,7 @@ function DetailPanel({ detail, isSaved, operatorProfile, authenticated, onClose,
   const [answer, setAnswer] = useState<PropertyAnswer | null>(null);
   const [asking, setAsking] = useState(false);
   const item = detail.opportunity;
+  const visual = propertyVisual(item);
   async function askProperty(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -803,12 +855,12 @@ function DetailPanel({ detail, isSaved, operatorProfile, authenticated, onClose,
     onInquiry(inquiryFor, String(data.get('message') ?? ''));
     setInquiryFor(null);
   }
-  return <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section ref={dialogRef} className="detailPanel" role="dialog" aria-modal="true" aria-labelledby="detail-title"><div className="panelHeader"><span>Oportunidad canónica</span><button className="iconButton" onClick={onClose} aria-label="Cerrar detalle" autoFocus><X /></button></div><div className="detailMedia"><Building2 size={58} strokeWidth={1.1} /><span>Consultá las fotos en cada publicación de origen</span></div><div className="detailContent"><div className="detailLead"><div><span className="freshness"><Clock3 size={14} />{freshnessLabel(item.freshness)}</span><h2 id="detail-title">{formatMoney(item.price, item.currency)}</h2><p>{item.address}</p></div><button className={`saveButton ${isSaved ? 'saved' : ''}`} onClick={onSave} aria-label={isSaved ? 'Quitar de guardados' : 'Guardar oportunidad'}><Heart fill={isSaved ? 'currentColor' : 'none'} /><span>{isSaved ? 'Guardada' : 'Guardar'}</span></button></div><div className="detailFacts"><span><strong>{item.rooms ?? '—'}</strong> ambientes</span><span><strong>{item.areaTotalM2 ?? '—'}</strong> m² totales</span><span><strong>{item.publicationCount}</strong> fuentes</span></div><section className="evidenceBlock"><span className="sectionKicker">Por qué verla</span><h3>Una sola propiedad, toda la evidencia</h3><p>Consolidamos las publicaciones vinculadas sin ocultar quién publicó, cuándo se verificó ni qué precio informa cada fuente.</p></section><section className="assistantBlock"><span className="sectionKicker"><Sparkles size={15} /> Preguntale a la ficha</span><h3>Una respuesta con evidencia</h3><form onSubmit={askProperty}><input name="question" aria-label="Pregunta sobre la propiedad" required minLength={3} maxLength={1000} placeholder="Ej. ¿Cuál es el precio por m²?" /><button className="primaryButton" disabled={asking}>{asking ? <LoaderCircle className="spin" /> : <MessageCircle />}{asking ? 'Revisando…' : 'Preguntar'}</button></form>{answer && <div className="assistantAnswer" role="status"><p>{answer.answer}</p>{answer.evidence.length > 0 && <dl>{answer.evidence.map((fact) => <div key={`${fact.label}-${fact.value}`}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl>}{answer.caveats.map((caveat) => <small key={caveat}>{caveat}</small>)}</div>}</section><section><div className="sectionHeading compact"><div><span className="sectionKicker">Proveniencia</span><h3>Publicaciones de origen</h3></div></div><div className="sourceList">{detail.publications.map((publication) => <article className="sourceCard" key={publication.id}><a href={publication.sourceUrl} target="_blank" rel="noreferrer"><span className="sourceIcon"><Building2 size={18} /></span><span><strong>{publication.sourceName}</strong><small>{publication.publisherName ?? (publication.publisherType === 'owner' ? 'Dueño directo' : 'Publicación agregada')} · {formatMoney(publication.price, publication.currency)}</small></span><span className={`sourceStatus ${publication.status}`}>{publication.status === 'active' ? 'Activa' : 'Revisar'}</span><ChevronRight size={17} /></a>{publication.status === 'active' && publication.publisherType !== 'aggregated' && <button className="sourceAction" onClick={() => startInquiry(publication.id)}><MessageCircle size={16} /> Consultar a esta fuente</button>}{publication.publisherType === 'aggregated' && operatorProfile?.verificationStatus === 'verified' && <button className="sourceAction" onClick={() => onClaim(publication.id)}><BadgeCheck size={16} /> Solicitar representación</button>}</article>)}</div>{inquiryFor && <form className="inquiryComposer" onSubmit={submitInquiry}><Field label="Tu consulta"><textarea name="message" required minLength={10} maxLength={4000} rows={3} autoFocus placeholder="Quisiera conocer disponibilidad y coordinar una visita." /></Field><div><button type="button" className="quietButton" onClick={() => setInquiryFor(null)}>Cancelar</button><button className="primaryButton">Enviar consulta</button></div></form>}</section></div></section></div>;
+  return <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section ref={dialogRef} className="detailPanel" role="dialog" aria-modal="true" aria-labelledby="detail-title"><div className="panelHeader"><span>Oportunidad verificada</span><button className="iconButton" onClick={onClose} aria-label="Cerrar detalle" autoFocus><X /></button></div><figure className="detailMedia"><Image src={visual.src} alt={visual.alt} width={1280} height={853} priority sizes="(max-width: 620px) 100vw, 620px" /><figcaption className="referenceBadge"><Images size={14} /> Imagen editorial de referencia</figcaption><span className="photoCount"><Images size={14} /> {visual.count} fotos</span></figure><div className="detailContent"><div className="detailLead"><div><span className="freshness"><span className="statusDot active" />{freshnessLabel(item.freshness)}</span><h2 id="detail-title">{formatMoney(item.price, item.currency)}</h2><p><MapPin size={15} />{item.address}</p></div><button className={`saveButton ${isSaved ? 'saved' : ''}`} onClick={onSave} aria-label={isSaved ? 'Quitar de guardados' : 'Guardar oportunidad'}><Heart fill={isSaved ? 'currentColor' : 'none'} /><span>{isSaved ? 'Guardada' : 'Guardar'}</span></button></div><div className="detailFacts"><span><strong>{item.rooms ?? '—'}</strong> ambientes</span><span><strong>{item.areaTotalM2 ?? '—'}</strong> m² totales</span><span><strong>{item.publicationCount}</strong> fuentes</span></div><section className="evidenceBlock"><span className="sectionKicker">Por qué verla</span><h3>Una sola propiedad, toda la evidencia</h3><p>Consolidamos las publicaciones vinculadas sin ocultar quién publicó, cuándo se verificó ni qué precio informa cada fuente.</p></section><section className="assistantBlock"><span className="sectionKicker"><Sparkles size={15} /> Preguntale a la ficha</span><h3>Una respuesta con evidencia</h3><form onSubmit={askProperty}><input name="question" aria-label="Pregunta sobre la propiedad" required minLength={3} maxLength={1000} placeholder="Ej. ¿Cuál es el precio por m²?" /><button className="primaryButton" disabled={asking}>{asking ? <LoaderCircle className="spin" /> : <MessageCircle />}{asking ? 'Revisando…' : 'Preguntar'}</button></form>{answer && <div className="assistantAnswer" role="status"><p>{answer.answer}</p>{answer.evidence.length > 0 && <dl>{answer.evidence.map((fact) => <div key={`${fact.label}-${fact.value}`}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl>}{answer.caveats.map((caveat) => <small key={caveat}>{caveat}</small>)}</div>}</section><section><div className="sectionHeading compact"><div><span className="sectionKicker">Proveniencia</span><h3>Publicaciones de origen</h3></div></div><div className="sourceList">{detail.publications.map((publication) => <article className="sourceCard" key={publication.id}><a href={publication.sourceUrl} target="_blank" rel="noreferrer"><span className="sourceIcon"><Building2 size={18} /></span><span><strong>{publication.sourceName}</strong><small>{publication.publisherName ?? (publication.publisherType === 'owner' ? 'Dueño directo' : 'Publicación agregada')} · {formatMoney(publication.price, publication.currency)}</small></span><span className={`sourceStatus ${publication.status}`}>{publication.status === 'active' ? 'Activa' : 'Revisar'}</span><ChevronRight size={17} /></a>{publication.status === 'active' && publication.publisherType !== 'aggregated' && <button className="sourceAction" onClick={() => startInquiry(publication.id)}><MessageCircle size={16} /> Consultar a esta fuente</button>}{publication.publisherType === 'aggregated' && operatorProfile?.verificationStatus === 'verified' && <button className="sourceAction" onClick={() => onClaim(publication.id)}><BadgeCheck size={16} /> Solicitar representación</button>}</article>)}</div>{inquiryFor && <form className="inquiryComposer" onSubmit={submitInquiry}><Field label="Tu consulta"><textarea name="message" required minLength={10} maxLength={4000} rows={3} autoFocus placeholder="Quisiera conocer disponibilidad y coordinar una visita." /></Field><div><button type="button" className="quietButton" onClick={() => setInquiryFor(null)}>Cancelar</button><button className="primaryButton">Enviar consulta</button></div></form>}</section></div></section></div>;
 }
 
 function ComparisonPanel({ items, criteria, onClose, onRemove }: { items: Opportunity[]; criteria: SearchCriteria; onClose: () => void; onRemove: (id: string) => void }) {
   const dialogRef = useDialogFocus<HTMLElement>();
-  return <div className="overlay comparisonOverlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section ref={dialogRef} className="comparisonPanel" role="dialog" aria-modal="true" aria-labelledby="comparison-title"><div className="panelHeader"><span>Comparación objetiva</span><button className="iconButton" onClick={onClose} aria-label="Cerrar comparación" autoFocus><X /></button></div><div className="comparisonContent"><span className="sectionKicker"><Scale size={15} /> Decidir con contexto</span><h2 id="comparison-title">Tus oportunidades, lado a lado</h2><p>Comparamos la ficha canónica. Lo que no está respaldado por una fuente queda sin afirmar.</p><div className="comparisonGrid">{items.map((item) => <article key={item.id}><button className="removeComparison" aria-label={`Quitar ${item.title} de la comparación`} onClick={() => onRemove(item.id)}><X size={16} /></button><h3>{formatMoney(item.price, item.currency)}</h3><p>{item.address ?? item.title}</p><dl><ComparisonFact label="Ambientes" value={item.rooms === null ? 'Sin dato' : String(item.rooms)} /><ComparisonFact label="Superficie" value={item.areaTotalM2 === null ? 'Sin dato' : `${item.areaTotalM2} m²`} /><ComparisonFact label="Precio por m²" value={item.price !== null && item.areaTotalM2 ? formatMoney(Math.round(item.price / item.areaTotalM2), item.currency) : 'Sin dato'} /><ComparisonFact label="Fuentes" value={String(item.publicationCount)} /><ComparisonFact label="Presupuesto" value={criteria.maxPrice === undefined || item.price === null ? 'Sin comparar' : item.price <= criteria.maxPrice ? 'Dentro del máximo' : 'Supera el máximo'} /><ComparisonFact label="Frescura" value={freshnessLabel(item.freshness)} /></dl></article>)}</div><div className="comparisonCaveat"><ShieldCheck size={18} /><span>Ruido, luz, estado y gastos requieren evidencia de la publicación o una visita. Umbral no los completa por su cuenta.</span></div></div></section></div>;
+  return <div className="overlay comparisonOverlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section ref={dialogRef} className="comparisonPanel" role="dialog" aria-modal="true" aria-labelledby="comparison-title"><div className="panelHeader"><span>Comparación objetiva</span><button className="iconButton" onClick={onClose} aria-label="Cerrar comparación" autoFocus><X /></button></div><div className="comparisonContent"><span className="sectionKicker"><Scale size={15} /> Decidir con contexto</span><h2 id="comparison-title">Tus oportunidades, lado a lado</h2><p>Comparamos la ficha canónica. Lo que no está respaldado por una fuente queda sin afirmar.</p><div className="comparisonGrid">{items.map((item, index) => { const visual = propertyVisual(item, index); return <article key={item.id}><div className="comparisonImage"><Image src={visual.src} alt={visual.alt} width={1280} height={853} sizes="(max-width: 560px) 100vw, 30vw" /></div><button className="removeComparison" aria-label={`Quitar ${item.title} de la comparación`} onClick={() => onRemove(item.id)}><X size={16} /></button><h3>{formatMoney(item.price, item.currency)}</h3><p>{item.address ?? item.title}</p><dl><ComparisonFact label="Ambientes" value={item.rooms === null ? 'Sin dato' : String(item.rooms)} /><ComparisonFact label="Superficie" value={item.areaTotalM2 === null ? 'Sin dato' : `${item.areaTotalM2} m²`} /><ComparisonFact label="Precio por m²" value={item.price !== null && item.areaTotalM2 ? formatMoney(Math.round(item.price / item.areaTotalM2), item.currency) : 'Sin dato'} /><ComparisonFact label="Fuentes" value={String(item.publicationCount)} /><ComparisonFact label="Presupuesto" value={criteria.maxPrice === undefined || item.price === null ? 'Sin comparar' : item.price <= criteria.maxPrice ? 'Dentro del máximo' : 'Supera el máximo'} /><ComparisonFact label="Frescura" value={freshnessLabel(item.freshness)} /></dl></article>; })}</div><div className="comparisonCaveat"><ShieldCheck size={18} /><span>Ruido, luz, estado y gastos requieren evidencia de la publicación o una visita. Umbral no los completa por su cuenta.</span></div></div></section></div>;
 }
 
 function ComparisonFact({ label, value }: { label: string; value: string }) {

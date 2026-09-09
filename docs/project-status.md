@@ -13,6 +13,7 @@ Last updated: 2026-09-09
 - Automated coverage: 50 unit/contract checks, five PostgreSQL integration scenarios, and two Chromium release scenarios.
 - Product direction recorded in `PRODUCT.md`: Spanish (Argentina), ARS/USD, five launch markets, and WCAG 2.2 AA.
 - Mobile Discover, canonical detail/provenance, save/dismiss, monitor/alert, private publishing, and profile journeys verified at 360px against the production Docker build.
+- Photo-first responsive UI with a modern mineral-green design system, reference-media disclosure, image-led opportunity cards, visual detail and comparison views, short state motion, and consistent surfaces across Discover, Monitors, Publish, Saved, and Profile.
 - Provider-neutral natural-language intent interpretation with strict structured outputs, editable confirmation, deterministic fallback, request metadata, and Argentine-language evals.
 - Professional onboarding, verified-operator gates, idempotent bounded imports, provenance-preserving claims, publisher-owned availability updates, inquiry routing, and mobile inventory/inbox UI.
 - Grounded property Q&A and two-to-three-item comparison with source count, freshness, budget, and price-per-square-metre evidence.
@@ -44,7 +45,7 @@ Last updated: 2026-09-09
 - Initial authorized external data source and its contractual limits.
 - Production email webhook/provider and its delivery contract.
 - Hosting, secrets, managed PostgreSQL, telemetry, and media-storage providers.
-- Named reference products, if desired, to further sharpen the agreed calm, discerning, trustworthy visual direction.
+- Replacement policy for editorial reference images once verified source media becomes available.
 
 ## Production blockers
 
