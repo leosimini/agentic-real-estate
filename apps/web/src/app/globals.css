@@ -78,6 +78,12 @@ h1, h2, h3, p { text-wrap: pretty; }
 .criteriaHeader span { display: flex; align-items: center; gap: 7px; }
 .criteriaHeader span:first-child { color: var(--spruce); }
 .criteriaBody { padding: 0 17px 17px; display: grid; grid-template-columns: 1fr 1.2fr .8fr 1fr .8fr; gap: 10px; align-items: end; }
+.interpretationMeta { grid-column: 1 / -1; margin-bottom: 4px; padding: 12px 13px; border-left: 3px solid var(--line-strong); background: var(--paper-deep); }
+.interpretationMeta p { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.interpretationMeta ul { margin: 7px 0 0; padding-left: 18px; color: #68483d; font-size: 12px; line-height: 1.45; }
+.confidence { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid var(--line-strong); color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.confidence-high, .confidence-medium { border-color: #adc4b5; background: #edf5ef; color: var(--spruce); }
+.confidence-low { border-color: #d2a99a; background: var(--clay-soft); color: #68483d; }
 .field { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .field input, .field select, .field textarea { width: 100%; min-height: 44px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-strong); color: var(--ink); outline: 0; }
 .field textarea { resize: vertical; line-height: 1.45; }

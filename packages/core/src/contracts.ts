@@ -102,6 +102,25 @@ export const searchCriteriaSchema = z.object({
 });
 export type SearchCriteria = z.infer<typeof searchCriteriaSchema>;
 
+export const intentConfidenceSchema = z.enum(['high', 'medium', 'low']);
+export type IntentConfidence = z.infer<typeof intentConfidenceSchema>;
+
+export const intentInterpretationSchema = z.object({
+  criteria: searchCriteriaSchema,
+  confidence: intentConfidenceSchema,
+  assumptions: z.array(nonEmptyTextSchema).max(10),
+  evidence: z.array(z.object({
+    input: nonEmptyTextSchema,
+    interpretedAs: nonEmptyTextSchema
+  }).strict()).max(20),
+  provider: z.enum(['deterministic', 'openai']),
+  model: nonEmptyTextSchema.optional(),
+  requestId: nonEmptyTextSchema.optional(),
+  fallbackReason: z.enum(['provider_unavailable', 'provider_invalid_response']).optional(),
+  requiresConfirmation: z.literal(true)
+}).strict();
+export type IntentInterpretation = z.infer<typeof intentInterpretationSchema>;
+
 export const opportunityDtoSchema = z.object({
   id: z.string().uuid(),
   title: nonEmptyTextSchema,

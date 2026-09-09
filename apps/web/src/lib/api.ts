@@ -14,6 +14,18 @@ export type SearchCriteria = {
   preferences?: string[];
 };
 
+export type IntentInterpretation = {
+  criteria: SearchCriteria;
+  confidence: 'high' | 'medium' | 'low';
+  assumptions: string[];
+  evidence: Array<{ input: string; interpretedAs: string }>;
+  provider: 'deterministic' | 'openai';
+  model?: string;
+  requestId?: string;
+  fallbackReason?: 'provider_unavailable' | 'provider_invalid_response';
+  requiresConfirmation: true;
+};
+
 export type Opportunity = {
   id: string;
   title: string;

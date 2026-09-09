@@ -25,11 +25,41 @@ describe('authentication foundation', () => {
     assert.equal(config.environment, 'production');
   });
 
+  it('requires an API key only when the OpenAI provider is selected', () => {
+    assert.throws(() => loadApiConfig({
+      NODE_ENV: 'production',
+      JWT_SECRET: 'a-production-secret-that-is-at-least-thirty-two-characters',
+      AI_PROVIDER: 'openai'
+    }), /OPENAI_API_KEY/);
+    const config = loadApiConfig({
+      NODE_ENV: 'production',
+      JWT_SECRET: 'a-production-secret-that-is-at-least-thirty-two-characters',
+      AI_PROVIDER: 'openai',
+      OPENAI_API_KEY: 'server-side-key'
+    });
+    assert.equal(config.aiProvider, 'openai');
+  });
+
   it('protects user-scoped endpoints', async () => {
     const app = await buildApp(loadApiConfig({ NODE_ENV: 'test' }));
     const response = await app.inject({ method: 'GET', url: '/v1/me' });
     assert.equal(response.statusCode, 401);
     assert.equal(response.json().error.code, 'unauthorized');
+    await app.close();
+  });
+
+  it('interprets intent without requiring an account and requires confirmation', async () => {
+    const app = await buildApp(loadApiConfig({ NODE_ENV: 'test' }));
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/intents/interpret',
+      payload: { intent: 'Alquiler en Rosario hasta ARS 700.000' }
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json().criteria, {
+      operation: 'rent', locations: ['Rosario'], currency: 'ARS', maxPrice: 700000, preferences: []
+    });
+    assert.equal(response.json().requiresConfirmation, true);
     await app.close();
   });
 });

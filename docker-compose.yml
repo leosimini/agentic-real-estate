@@ -36,6 +36,10 @@ services:
       JWT_SECRET: local-docker-only-secret-change-before-deploy
       CORS_ORIGINS: http://localhost:${WEB_PORT:-3000}
       PUBLIC_WEB_URL: http://localhost:${WEB_PORT:-3000}
+      AI_PROVIDER: ${AI_PROVIDER:-deterministic}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-6-astra}
+      AI_TIMEOUT_MS: ${AI_TIMEOUT_MS:-8000}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -55,7 +59,7 @@ services:
     environment:
       DATABASE_URL: postgres://app:app@postgres:5432/realty
       WORKER_CONCURRENCY: 5
-      AI_PROVIDER: mock
+      AI_PROVIDER: deterministic
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -4,6 +4,11 @@ import jwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
 import { z } from 'zod';
 import {
+  createResilientIntentInterpreter,
+  DeterministicIntentInterpreter,
+  OpenAIIntentInterpreter
+} from '@realty/ai';
+import {
   alertDtoSchema,
   monitorDtoSchema,
   opportunityDtoSchema,
@@ -37,6 +42,9 @@ const registerInputSchema = z.object({
 const loginInputSchema = z.object({
   email: emailSchema,
   password: z.string().min(1).max(200)
+}).strict();
+const intentInputSchema = z.object({
+  intent: z.string().trim().min(5).max(2000)
 }).strict();
 
 const monitorInputSchema = z.object({
@@ -221,6 +229,19 @@ function signToken(app: FastifyInstance, config: ApiConfig, user: Pick<UserRow, 
 
 export async function buildApp(config: ApiConfig = loadApiConfig()): Promise<FastifyInstance> {
   const app = Fastify({ logger: true, trustProxy: false });
+  const intentInterpreter = createResilientIntentInterpreter({
+    primary: config.aiProvider === 'openai'
+      ? new OpenAIIntentInterpreter({
+          apiKey: config.openAiApiKey!,
+          model: config.openAiModel,
+          timeoutMs: config.aiTimeoutMs
+        })
+      : undefined,
+    fallback: new DeterministicIntentInterpreter(),
+    onFallback: ({ reason, error }) => {
+      app.log.warn({ reason, err: error }, 'AI intent provider unavailable; deterministic interpretation used');
+    }
+  });
 
   await app.register(cors, {
     origin(origin, callback) {
@@ -258,6 +279,16 @@ export async function buildApp(config: ApiConfig = loadApiConfig()): Promise<Fas
   app.get('/ready', { config: { rateLimit: false } }, async (_request, reply) => {
     const ready = await databaseReady();
     return reply.code(ready ? 200 : 503).send({ ok: ready, service: 'api', dependency: 'postgres' });
+  });
+
+  app.post('/v1/intents/interpret', {
+    config: { rateLimit: { max: 15, timeWindow: '1 minute' } }
+  }, async (request, reply) => {
+    const parsed = intentInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: { code: 'invalid_request', details: parsed.error.flatten() } });
+    }
+    return intentInterpreter.interpret(parsed.data.intent);
   });
 
   app.post('/v1/auth/register', { config: { rateLimit: { max: 8, timeWindow: '1 minute' } } }, async (request, reply) => {

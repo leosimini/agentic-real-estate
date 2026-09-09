@@ -10,29 +10,29 @@ Last updated: 2026-09-09
 - Authenticated, tenant-scoped API for canonical search/detail, saved/dismissed state, monitors, alerts, and direct publishing.
 - Transactional direct publishing with immutable source snapshots, canonical candidate evidence, review queues, and idempotent replay.
 - Leased recurring monitor execution with persisted snapshots, meaningful-change suppression, and idempotent in-app delivery.
-- Automated coverage: 30 unit/contract checks plus three PostgreSQL integration scenarios.
+- Automated coverage: 40 unit/contract checks plus three PostgreSQL integration scenarios.
 - Product direction recorded in `PRODUCT.md`: Spanish (Argentina), ARS/USD, five launch markets, and WCAG 2.2 AA.
+- Mobile Discover, canonical detail/provenance, save/dismiss, monitor/alert, private publishing, and profile journeys verified at 360px against the production Docker build.
+- Provider-neutral natural-language intent interpretation with strict structured outputs, editable confirmation, deterministic fallback, request metadata, and Argentine-language evals.
 
 ## Current work
 
-- Building the mobile-first Discover → Detail → Save/Dismiss → Monitor → Alert journey.
-- Converting remaining raw monitor, alert, and history responses to explicit API contracts.
-- Adding AI-assisted intent parsing behind deterministic validation and user confirmation.
+- Adding basic comparison, property Q&A, private-listing management, and operator workflows.
+- Hardening production observability, notification delivery, and release operations.
 
 ## Next priorities
 
-1. Mobile Discover-to-Detail vertical slice and authenticated navigation.
-2. Typed monitor editing, pause/resume, and alert read state.
-3. AI intent parsing and explanation layer.
-4. Authorized launch-source integration and media pipeline.
-5. Operator and listing-management workflows.
+1. Operator onboarding, eligible listing claims, bulk import, and inquiry ownership.
+2. Private/operator listing management and availability controls.
+3. Basic comparison and property Q&A.
+4. Email notification adapter and delivery retry/dead-letter operations.
+5. Authorized launch-source integration and media pipeline.
 
 ## Known technical debt
 
-- Monitor, alert, and property-history endpoints still expose database-shaped rows.
 - Current opportunity discovery uses PostgreSQL filtering; ranking and geo search need production calibration.
-- The existing web shell is static and its controls are not yet wired to product behavior.
 - No authorized external inventory feed or production media storage has been selected.
+- Password auth still needs recovery and verified-email flows before public launch.
 
 ## Open product decisions
 

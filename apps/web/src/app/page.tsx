@@ -35,6 +35,7 @@ import {
   searchQuery,
   type Alert,
   type Currency,
+  type IntentInterpretation,
   type Monitor,
   type Opportunity,
   type OpportunityDetail,
@@ -47,32 +48,14 @@ type User = { id: string; email: string; displayName: string | null; role: strin
 
 const cities = ['Buenos Aires', 'Córdoba', 'Rosario', 'Mar del Plata', 'Mendoza'];
 const starterIntent = 'Departamento de 3 ambientes en Palermo o Colegiales, hasta USD 250.000. Con balcón y sin planta baja.';
-
-function deriveCriteria(intent: string): SearchCriteria {
-  const normalized = intent.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  const locations = cities.filter((city) => normalized.includes(city.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()));
-  for (const neighborhood of ['Palermo', 'Colegiales', 'Belgrano', 'Nueva Córdoba', 'Pichincha', 'Güemes']) {
-    if (normalized.includes(neighborhood.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase())) locations.push(neighborhood);
-  }
-  const currency: Currency = /\b(ars|pesos?)\b/.test(normalized) ? 'ARS' : 'USD';
-  const roomMatch = normalized.match(/(\d+)\s*(?:ambientes?|habitaciones?|dormitorios?)/);
-  const rawPrice = normalized.match(/(?:usd|u\$s|ars|\$)\s*([\d.]+)/)?.[1]
-    ?? normalized.match(/(?:hasta|menos de|maximo|max)\s*(?:usd|u\$s|ars|\$)?\s*([\d.]+)/)?.[1];
-  const parsedPrice = rawPrice ? Number(rawPrice.replace(/\./g, '')) : undefined;
-  return {
-    operation: normalized.includes('alquil') ? 'rent' : 'sale',
-    locations: [...new Set(locations.length ? locations : ['Buenos Aires'])],
-    currency,
-    maxPrice: parsedPrice && Number.isFinite(parsedPrice) ? parsedPrice : undefined,
-    rooms: roomMatch ? Number(roomMatch[1]) : undefined,
-    excludedFloors: /sin planta baja|no planta baja/.test(normalized) ? ['Planta baja'] : undefined,
-    preferences: [
-      normalized.includes('balcon') ? 'Balcón' : '',
-      normalized.includes('luminos') ? 'Luminoso' : '',
-      normalized.includes('silenc') || normalized.includes('tranquil') ? 'Calle tranquila' : ''
-    ].filter(Boolean)
-  };
-}
+const starterCriteria: SearchCriteria = {
+  locations: ['Palermo', 'Colegiales'],
+  currency: 'USD',
+  maxPrice: 250_000,
+  rooms: 3,
+  excludedFloors: ['Planta baja'],
+  preferences: ['Balcón']
+};
 
 function formatMoney(amount: number | null, currency: string | null): string {
   if (amount === null || !currency) return 'Precio a consultar';
@@ -102,7 +85,10 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<Tab>('discover');
   const [mobileMenu, setMobileMenu] = useState(false);
   const [intent, setIntent] = useState(starterIntent);
-  const [criteria, setCriteria] = useState<SearchCriteria>(() => deriveCriteria(starterIntent));
+  const [criteria, setCriteria] = useState<SearchCriteria>(starterCriteria);
+  const [interpretation, setInterpretation] = useState<IntentInterpretation | null>(null);
+  const [interpreting, setInterpreting] = useState(false);
+  const [criteriaConfirmed, setCriteriaConfirmed] = useState(false);
   const [criteriaOpen, setCriteriaOpen] = useState(true);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [saved, setSaved] = useState<Opportunity[]>([]);
@@ -186,12 +172,29 @@ export default function Home() {
     if (!token && tab !== 'discover') setAuthOpen(true);
   }
 
-  function interpretIntent(event: FormEvent) {
+  async function interpretIntent(event: FormEvent) {
     event.preventDefault();
-    const next = deriveCriteria(intent);
-    setCriteria(next);
-    setCriteriaOpen(true);
-    void loadOpportunities(next);
+    setInterpreting(true);
+    setNotice(null);
+    try {
+      const result = await api<IntentInterpretation>('/v1/intents/interpret', {
+        method: 'POST', body: JSON.stringify({ intent })
+      });
+      setInterpretation(result);
+      setCriteria(result.criteria);
+      setCriteriaConfirmed(false);
+      setCriteriaOpen(true);
+      setNotice('Interpretamos tu pedido. Revisá el borrador y confirmalo para buscar.');
+    } catch (error) {
+      setNotice(errorMessage(error));
+    } finally {
+      setInterpreting(false);
+    }
+  }
+
+  function applyCriteria() {
+    setCriteriaConfirmed(true);
+    void loadOpportunities(criteria);
   }
 
   async function toggleSaved(item: Opportunity) {
@@ -231,6 +234,11 @@ export default function Home() {
 
   async function createMonitor() {
     if (!token) return setAuthOpen(true);
+    if (!criteriaConfirmed) {
+      setNotice('Revisá los criterios y elegí “Ver oportunidades” antes de activar el monitor.');
+      setCriteriaOpen(true);
+      return;
+    }
     try {
       const created = await api<Monitor>('/v1/monitors', {
         method: 'POST',
@@ -315,16 +323,19 @@ export default function Home() {
 
         {activeTab === 'discover' && <Discover
           intent={intent}
-          setIntent={setIntent}
+          setIntent={(value) => { setIntent(value); setCriteriaConfirmed(false); }}
           criteria={criteria}
-          setCriteria={setCriteria}
+          setCriteria={(value) => { setCriteria(value); setCriteriaConfirmed(false); }}
+          interpretation={interpretation}
+          interpreting={interpreting}
+          criteriaConfirmed={criteriaConfirmed}
           criteriaOpen={criteriaOpen}
           setCriteriaOpen={setCriteriaOpen}
           opportunities={opportunities}
           loading={loading}
           savedIds={savedIds}
           onInterpret={interpretIntent}
-          onApply={() => void loadOpportunities(criteria)}
+          onApply={applyCriteria}
           onCreateMonitor={createMonitor}
           onOpen={openDetail}
           onSave={toggleSaved}
@@ -373,12 +384,15 @@ type DiscoverProps = {
   setIntent: (value: string) => void;
   criteria: SearchCriteria;
   setCriteria: (value: SearchCriteria) => void;
+  interpretation: IntentInterpretation | null;
+  interpreting: boolean;
+  criteriaConfirmed: boolean;
   criteriaOpen: boolean;
   setCriteriaOpen: (value: boolean) => void;
   opportunities: Opportunity[];
   loading: boolean;
   savedIds: Set<string>;
-  onInterpret: (event: FormEvent) => void;
+  onInterpret: (event: FormEvent) => void | Promise<void>;
   onApply: () => void;
   onCreateMonitor: () => void;
   onOpen: (id: string) => void;
@@ -402,7 +416,9 @@ function Discover(props: DiscoverProps) {
       <textarea id="intent" value={props.intent} onChange={(event) => props.setIntent(event.target.value)} rows={3} minLength={5} required />
       <div className="composerFooter">
         <span><ShieldCheck size={16} /> Vas a poder revisar cada criterio</span>
-        <button className="primaryButton" type="submit"><Sparkles size={17} /> Interpretar búsqueda</button>
+        <button className="primaryButton" type="submit" disabled={props.interpreting}>
+          {props.interpreting ? <><LoaderCircle className="spin" size={17} /> Interpretando…</> : <><Sparkles size={17} /> Interpretar búsqueda</>}
+        </button>
       </div>
     </form>
 
@@ -411,11 +427,23 @@ function Discover(props: DiscoverProps) {
         <span><Check size={17} /> Borrador editable</span><span><ListFilter size={16} /> {props.criteriaOpen ? 'Ocultar' : 'Revisar criterios'}</span>
       </button>
       {props.criteriaOpen && <div className="criteriaBody">
-        <Field label="Operación"><select value={props.criteria.operation} onChange={(event) => props.setCriteria({ ...props.criteria, operation: event.target.value as Operation })}><option value="sale">Comprar</option><option value="rent">Alquilar</option></select></Field>
-        <Field label="Zona"><select value={props.criteria.locations?.[0] ?? 'Buenos Aires'} onChange={(event) => props.setCriteria({ ...props.criteria, locations: [event.target.value] })}>{cities.map((city) => <option key={city}>{city}</option>)}</select></Field>
-        <Field label="Moneda"><select value={props.criteria.currency ?? 'USD'} onChange={(event) => props.setCriteria({ ...props.criteria, currency: event.target.value as Currency })}><option>USD</option><option>ARS</option></select></Field>
+        <div className="interpretationMeta" role="status">
+          <span className={`confidence confidence-${props.interpretation?.confidence ?? 'pending'}`}>
+            {props.criteriaConfirmed ? 'Criterios confirmados' : props.interpretation ? `Confianza ${confidenceLabel(props.interpretation.confidence)}` : 'Pendiente de confirmación'}
+          </span>
+          <p>{interpretationMessage(props.interpretation)}</p>
+          {props.interpretation?.assumptions.length ? <ul>{props.interpretation.assumptions.map((assumption) => <li key={assumption}>{assumption}</li>)}</ul> : null}
+        </div>
+        <Field label="Operación"><select value={props.criteria.operation ?? ''} onChange={(event) => props.setCriteria({ ...props.criteria, operation: event.target.value ? event.target.value as Operation : undefined })}><option value="">Sin definir</option><option value="sale">Comprar</option><option value="rent">Alquilar</option></select></Field>
+        <Field label="Zonas"><input value={props.criteria.locations?.join(', ') ?? ''} list="launch-markets" placeholder="Palermo, Colegiales" onChange={(event) => props.setCriteria({ ...props.criteria, locations: event.target.value.trim() ? event.target.value.split(',').map((location) => location.trim()).filter(Boolean).slice(0, 5) : undefined })} /><datalist id="launch-markets">{cities.map((city) => <option key={city} value={city} />)}</datalist></Field>
+        <Field label="Moneda"><select value={props.criteria.currency ?? ''} onChange={(event) => props.setCriteria({ ...props.criteria, currency: event.target.value ? event.target.value as Currency : undefined })}><option value="">Sin definir</option><option>USD</option><option>ARS</option></select></Field>
+        <Field label="Desde"><input type="number" min="0" value={props.criteria.minPrice ?? ''} placeholder="Sin mínimo" onChange={(event) => props.setCriteria({ ...props.criteria, minPrice: event.target.value ? Number(event.target.value) : undefined })} /></Field>
         <Field label="Hasta"><input type="number" min="0" value={props.criteria.maxPrice ?? ''} placeholder="Sin máximo" onChange={(event) => props.setCriteria({ ...props.criteria, maxPrice: event.target.value ? Number(event.target.value) : undefined })} /></Field>
         <Field label="Ambientes"><input type="number" min="0" value={props.criteria.rooms ?? ''} placeholder="Cualquiera" onChange={(event) => props.setCriteria({ ...props.criteria, rooms: event.target.value ? Number(event.target.value) : undefined })} /></Field>
+        <Field label="Dormitorios"><input type="number" min="0" value={props.criteria.bedrooms ?? ''} placeholder="Cualquiera" onChange={(event) => props.setCriteria({ ...props.criteria, bedrooms: event.target.value ? Number(event.target.value) : undefined })} /></Field>
+        <Field label="Superficie desde"><input type="number" min="0" value={props.criteria.minAreaM2 ?? ''} placeholder="Sin mínimo" onChange={(event) => props.setCriteria({ ...props.criteria, minAreaM2: event.target.value ? Number(event.target.value) : undefined })} /></Field>
+        <Field label="Excluir pisos"><input value={props.criteria.excludedFloors?.join(', ') ?? ''} placeholder="Ej. Planta baja" onChange={(event) => props.setCriteria({ ...props.criteria, excludedFloors: event.target.value.trim() ? event.target.value.split(',').map((value) => value.trim()).filter(Boolean) : undefined })} /></Field>
+        <Field label="Preferencias"><input value={props.criteria.preferences?.join(', ') ?? ''} placeholder="Balcón, luminoso" onChange={(event) => props.setCriteria({ ...props.criteria, preferences: event.target.value.split(',').map((value) => value.trim()).filter(Boolean) })} /></Field>
         <div className="criteriaActions"><button className="secondaryButton" type="button" onClick={props.onApply}><Search size={17} /> Ver oportunidades</button><button className="quietButton" type="button" onClick={props.onCreateMonitor}><Bell size={17} /> Activar monitor diario</button></div>
       </div>}
     </section>
@@ -425,6 +453,20 @@ function Discover(props: DiscoverProps) {
       {props.loading ? <LoadingState /> : props.opportunities.length ? <div className="opportunityGrid">{props.opportunities.map((item, index) => <OpportunityCard key={item.id} item={item} index={index} saved={props.savedIds.has(item.id)} onOpen={props.onOpen} onSave={props.onSave} onDismiss={props.onDismiss} />)}</div> : <EmptyState icon={<Search />} title="Todavía no encontramos coincidencias" body="Probá ampliando la zona o el presupuesto. Si activás un monitor, seguimos buscando por vos." action="Revisar criterios" onAction={() => props.setCriteriaOpen(true)} />}
     </section>
   </>;
+}
+
+function confidenceLabel(confidence: IntentInterpretation['confidence']): string {
+  if (confidence === 'high') return 'alta';
+  if (confidence === 'medium') return 'media';
+  return 'baja';
+}
+
+function interpretationMessage(interpretation: IntentInterpretation | null): string {
+  if (!interpretation) return 'Este borrador inicial es editable. Confirmalo antes de delegar el seguimiento.';
+  if (interpretation.fallbackReason) return 'El asistente no respondió a tiempo; usamos una interpretación local y segura. Revisala antes de continuar.';
+  return interpretation.provider === 'openai'
+    ? 'El asistente propuso estos criterios. Vos decidís qué conservar antes de buscar.'
+    : 'Interpretamos el texto con reglas locales. Revisá cada criterio antes de buscar.';
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {

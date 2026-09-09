@@ -15,6 +15,7 @@ The primary object is a canonical property opportunity, not a source listing. Mu
 - `packages/db`: shared PostgreSQL connection.
 - `packages/ingestion`: validated source adapters and canonical candidate scoring.
 - `packages/monitoring`: deterministic change detection, suppression, digest, and idempotency rules.
+- `packages/ai`: provider-neutral intent interpretation, strict output validation, deterministic fallback, and evals.
 - `infra/postgres`: canonical data model with pgvector enabled.
 
 ## Run locally
@@ -23,6 +24,8 @@ The primary object is a canonical property opportunity, not a source listing. Mu
 2. Run `docker compose up --build`.
 3. Open `http://localhost:3000`.
 4. API health is `http://localhost:4000/health`.
+
+Intent interpretation defaults to local deterministic rules. To enable the OpenAI provider, set `AI_PROVIDER=openai` and provide `OPENAI_API_KEY` only to the API service. The browser never receives provider credentials, and every interpretation remains an editable draft until the user confirms it.
 
 If a default host port is occupied, override it without changing container networking, for example:
 
@@ -42,7 +45,7 @@ docker compose config --quiet
 ## MVP implementation sequence
 
 1. Mobile search, opportunity detail, saved state, monitor, and alert UI.
-2. Natural-language intent parsing with typed confirmation.
+2. Basic comparison and property Q&A.
 3. First authorized production inventory feed and media pipeline.
 4. Email/push adapters.
 5. Operator claim and listing-management flow.
