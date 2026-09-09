@@ -34,6 +34,7 @@ services:
       DATABASE_URL: postgres://app:app@postgres:5432/realty
       PORT: 4000
       JWT_SECRET: local-docker-only-secret-change-before-deploy
+      ACCOUNT_TOKEN_SECRET: local-docker-only-account-token-secret-change
       CORS_ORIGINS: http://localhost:${WEB_PORT:-3000}
       PUBLIC_WEB_URL: http://localhost:${WEB_PORT:-3000}
       AI_PROVIDER: ${AI_PROVIDER:-deterministic}
@@ -59,7 +60,13 @@ services:
     environment:
       DATABASE_URL: postgres://app:app@postgres:5432/realty
       WORKER_CONCURRENCY: 5
+      MONITOR_CANDIDATE_LIMIT: ${MONITOR_CANDIDATE_LIMIT:-5000}
       AI_PROVIDER: deterministic
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-disabled}
+      EMAIL_WEBHOOK_URL: ${EMAIL_WEBHOOK_URL:-}
+      EMAIL_WEBHOOK_BEARER_TOKEN: ${EMAIL_WEBHOOK_BEARER_TOKEN:-}
+      ACCOUNT_TOKEN_SECRET: local-docker-only-account-token-secret-change
+      PUBLIC_WEB_URL: http://localhost:${WEB_PORT:-3000}
     depends_on:
       migrate:
         condition: service_completed_successfully

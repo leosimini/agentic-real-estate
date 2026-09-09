@@ -10,6 +10,7 @@ export type Principal = {
   sub: string;
   email: string;
   role: 'consumer' | 'owner' | 'operator' | 'admin';
+  version: number;
 };
 
 declare module '@fastify/jwt' {
@@ -43,12 +44,12 @@ export async function passwordCredentialOrDummy(
 export async function authenticate(request: FastifyRequest, reply: FastifyReply) {
   try {
     await request.jwtVerify();
-    const current = await query<{ email: string; role: Principal['role'] }>(
-      'SELECT email, role FROM app_user WHERE id = $1',
+    const current = await query<{ email: string; role: Principal['role']; auth_version: number }>(
+      'SELECT email, role, auth_version FROM app_user WHERE id = $1',
       [request.user.sub]
     );
     const user = current.rows[0];
-    if (!user) throw new Error('Account is not active');
+    if (!user || request.user.version !== user.auth_version) throw new Error('Account is not active');
     request.user.email = user.email;
     request.user.role = user.role;
   } catch {

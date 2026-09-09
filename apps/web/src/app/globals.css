@@ -4,7 +4,7 @@
   --surface: #fbfaf7;
   --surface-strong: #ffffff;
   --ink: #18221d;
-  --muted: #66706a;
+  --muted: #56615b;
   --faint: #59645e;
   --line: #d6d5ce;
   --line-strong: #b9bdb7;
@@ -99,7 +99,7 @@ h1, h2, h3, p { text-wrap: pretty; }
 .opportunityGrid, .savedList { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
 .opportunityCard { min-width: 0; border: 1px solid var(--line); background: var(--surface); display: grid; grid-template-columns: minmax(150px, .72fr) minmax(0, 1.28fr); overflow: hidden; transition: transform .18s ease, box-shadow .18s ease; }
 .opportunityCard:hover { transform: translateY(-2px); box-shadow: 0 13px 34px rgba(24,34,29,.08); }
-.propertyMedia { position: relative; min-height: 255px; padding: 18px; border: 0; border-right: 1px solid rgba(24,34,29,.1); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: rgba(24,34,29,.62); text-align: center; }
+.propertyMedia { position: relative; min-height: 255px; padding: 18px; border: 0; border-right: 1px solid rgba(24,34,29,.1); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #34443b; text-align: center; }
 .propertyMedia > span:last-child { max-width: 120px; font-size: 11px; line-height: 1.35; }
 .mediaTone0 { background: #cbd5ca; }
 .mediaTone1 { background: #d7cfc0; }
@@ -165,6 +165,13 @@ h1, h2, h3, p { text-wrap: pretty; }
 .largeAvatar { width: 70px; height: 70px; font-family: Georgia, serif; font-size: 28px; }
 .profileCard h2 { margin: 0; font-family: Georgia, serif; font-weight: 500; }
 .profileCard p { margin: 6px 0 0; color: var(--muted); }
+.accountActions { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+.notificationPreferences { margin-top: 18px; padding: 22px 24px; border: 1px solid var(--line); background: var(--surface); display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+.notificationPreferences h2 { margin: 0; font-family: Georgia, serif; font-size: 27px; font-weight: 500; }
+.notificationPreferences p { margin: 7px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.notificationPreferences > div:last-child { display: grid; gap: 10px; }
+.notificationPreferences label { min-height: 44px; padding: 9px 11px; border: 1px solid var(--line); background: var(--surface-strong); display: flex; align-items: center; gap: 10px; color: var(--ink); font-size: 13px; font-weight: 650; }
+.notificationPreferences input { width: 18px; height: 18px; accent-color: var(--spruce); }
 .trustGrid { margin-top: 20px; display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
 .trustGrid article { padding: 20px; border-top: 2px solid var(--spruce); background: rgba(251,250,247,.55); }
 .trustGrid svg { color: var(--spruce); }
@@ -197,7 +204,7 @@ h1, h2, h3, p { text-wrap: pretty; }
 .panelHeader { position: sticky; top: 0; z-index: 2; min-height: 62px; padding: 0 18px; border-bottom: 1px solid var(--line); background: rgba(251,250,247,.96); display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .iconButton { width: 44px; height: 44px; border: 0; border-radius: 50%; background: transparent; color: inherit; display: grid; place-items: center; }
 .iconButton:hover { background: var(--paper-deep); }
-.detailMedia { min-height: 245px; background: #cbd5ca; color: rgba(24,34,29,.62); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; font-size: 12px; }
+.detailMedia { min-height: 245px; background: #cbd5ca; color: #34443b; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; font-size: 12px; }
 .detailContent { padding: 25px; }
 .detailLead { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
 .detailLead h2 { margin: 10px 0 4px; font-family: Georgia, serif; font-size: 37px; font-weight: 500; letter-spacing: -.03em; }
@@ -267,6 +274,11 @@ h1, h2, h3, p { text-wrap: pretty; }
 .authPanel form { display: grid; gap: 14px; }
 .formError { margin: 0; padding: 10px; background: #f8e7e2; color: #7e2f21; font-size: 12px; }
 .modeSwitch { width: 100%; min-height: 44px; margin-top: 10px; border: 0; background: transparent; color: var(--spruce); font-size: 13px; font-weight: 750; }
+.authModes { margin-top: 4px; }
+.authModes .modeSwitch + .modeSwitch { margin-top: 0; }
+.authComplete { padding: 18px; background: var(--sage); color: var(--spruce-dark); text-align: center; }
+.authComplete > svg { width: 34px; height: 34px; }
+.authComplete p { margin: 9px 0 16px; line-height: 1.5; }
 
 @media (max-width: 1100px) {
   .opportunityGrid { grid-template-columns: 1fr; }
@@ -296,6 +308,7 @@ h1, h2, h3, p { text-wrap: pretty; }
   .pageHeading .primaryButton { margin-top: 20px; }
   .trustGrid { grid-template-columns: 1fr; }
   .professionalCard { grid-template-columns: 1fr; }
+  .notificationPreferences { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 560px) {
@@ -320,6 +333,7 @@ h1, h2, h3, p { text-wrap: pretty; }
   .profileCard { grid-template-columns: 58px 1fr; }
   .largeAvatar { width: 58px; height: 58px; }
   .profileCard button { grid-column: 1 / -1; }
+  .profileCard .accountActions { grid-column: 1 / -1; }
   .professionalCard, .professionalWorkspace { padding: 18px; }
   .workspaceHeading { display: block; }
   .verificationBadge { display: inline-block; margin-top: 12px; }

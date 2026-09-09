@@ -6,6 +6,7 @@ import {
   type SearchCriteria
 } from '@realty/core';
 import { query, withTransaction, type DatabaseClient } from '@realty/db';
+import { normalizeAddress } from '@realty/ingestion';
 import {
   buildMonitorDigest,
   createDeliveryIdempotencyKey,
@@ -227,21 +228,40 @@ async function persistCompletedRun(
 
   let alertId: string | null = null;
   if (digest) {
-    const copy = digestCopy(digest);
-    const alert = await client.query<{ id: string }>(`
-      INSERT INTO alert (user_id, monitor_id, type, title, body, payload, idempotency_key)
-      VALUES ($1,$2,'monitor_digest',$3,$4,$5::jsonb,$6)
-      ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
-      DO UPDATE SET idempotency_key=excluded.idempotency_key
-      RETURNING id
-    `, [monitor.user_id, monitor.id, copy.title, copy.body, JSON.stringify(digest), digest.alertKey]);
-    alertId = alert.rows[0]!.id;
-    const deliveryKey = createDeliveryIdempotencyKey(digest.alertKey, 'in_app');
-    await client.query(`
-      INSERT INTO notification_delivery (alert_id, channel, status, idempotency_key)
-      VALUES ($1,'in_app','pending',$2)
-      ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
-    `, [alertId, deliveryKey]);
+    const preference = await client.query<{ digest_enabled: boolean }>(`
+      SELECT digest_enabled FROM notification_preference WHERE user_id=$1
+    `, [monitor.user_id]);
+    if (preference.rows[0]?.digest_enabled === false) {
+      alertId = null;
+    } else {
+      const copy = digestCopy(digest);
+      const alert = await client.query<{ id: string }>(`
+        INSERT INTO alert (user_id, monitor_id, type, title, body, payload, idempotency_key)
+        VALUES ($1,$2,'monitor_digest',$3,$4,$5::jsonb,$6)
+        ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
+        DO UPDATE SET idempotency_key=excluded.idempotency_key
+        RETURNING id
+      `, [monitor.user_id, monitor.id, copy.title, copy.body, JSON.stringify(digest), digest.alertKey]);
+      alertId = alert.rows[0]!.id;
+      const deliveryKey = createDeliveryIdempotencyKey(digest.alertKey, 'in_app');
+      await client.query(`
+        INSERT INTO notification_delivery (alert_id, channel, status, idempotency_key)
+        SELECT $1,'in_app','pending',$2
+        FROM notification_preference
+        WHERE user_id=$3 AND in_app_enabled=true
+        ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+      `, [alertId, deliveryKey, monitor.user_id]);
+      const emailDeliveryKey = createDeliveryIdempotencyKey(digest.alertKey, 'email');
+      await client.query(`
+        INSERT INTO notification_delivery (alert_id, channel, destination, status, idempotency_key)
+        SELECT $1, 'email', app_user.email, 'pending', $2
+        FROM app_user
+        JOIN notification_preference preference ON preference.user_id=app_user.id
+        WHERE app_user.id=$3 AND app_user.email_verified_at IS NOT NULL
+          AND preference.email_enabled=true
+        ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+      `, [alertId, emailDeliveryKey, monitor.user_id]);
+    }
   }
 
   const meaningfulChangesCount = digest?.eventKeys.length ?? 0;
@@ -278,6 +298,11 @@ export async function runMonitor(monitorId: string, scheduledFor: string): Promi
     }
     const criteria = searchCriteriaSchema.parse(monitor.criteria);
     const observedAt = new Date().toISOString();
+    const normalizedLocations = (criteria.locations ?? []).map(normalizeAddress).filter(Boolean);
+    const candidateLimit = Number(process.env.MONITOR_CANDIDATE_LIMIT ?? 5_000);
+    if (!Number.isInteger(candidateLimit) || candidateLimit < 100 || candidateLimit > 20_000) {
+      throw new Error('MONITOR_CANDIDATE_LIMIT must be an integer between 100 and 20000');
+    }
     const candidatesResult = await query<CandidateRow>(`
       SELECT p.id, p.canonical_address AS address, p.operation,
              p.canonical_price AS price, p.currency, p.area_total_m2, p.bedrooms,
@@ -289,10 +314,37 @@ export async function runMonitor(monitorId: string, scheduledFor: string): Promi
         ON pub.property_id=p.id AND pub.publication_status='active'
       LEFT JOIN source s ON s.id=pub.source_id
       WHERE p.status IN ('active','uncertain')
+        AND ($1::text IS NULL OR p.operation=$1)
+        AND ($2::text IS NULL OR upper(p.currency)=upper($2))
+        AND ($3::numeric IS NULL OR p.canonical_price >= $3)
+        AND ($4::numeric IS NULL OR p.canonical_price <= $4)
+        AND ($5::numeric IS NULL OR p.area_total_m2 >= $5)
+        AND ($6::integer IS NULL OR p.bedrooms >= $6)
+        AND ($7::integer IS NULL OR p.rooms >= $7)
+        AND (
+          cardinality($8::text[]) = 0
+          OR EXISTS (
+            SELECT 1 FROM unnest($8::text[]) location
+            WHERE strpos(p.normalized_address, location) > 0
+          )
+        )
       GROUP BY p.id
       ORDER BY p.updated_at DESC
-      LIMIT 1000
-    `);
+      LIMIT $9
+    `, [
+      criteria.operation ?? null,
+      criteria.currency ?? null,
+      criteria.minPrice ?? null,
+      criteria.maxPrice ?? null,
+      criteria.minAreaM2 ?? null,
+      criteria.bedrooms ?? null,
+      criteria.rooms ?? null,
+      normalizedLocations,
+      candidateLimit + 1
+    ]);
+    if (candidatesResult.rows.length > candidateLimit) {
+      throw new Error(`Monitor candidate limit exceeded (${candidateLimit}); narrow criteria or raise MONITOR_CANDIDATE_LIMIT`);
+    }
     const currentCandidates = candidatesResult.rows
       .map((row) => toSnapshot(row, criteria))
       .filter((candidate): candidate is MonitorCandidateSnapshot => candidate !== null);

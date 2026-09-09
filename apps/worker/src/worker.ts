@@ -1,9 +1,23 @@
 import { PgBoss } from 'pg-boss';
 import { closeDatabase } from '@realty/db';
 import { deliverPendingInApp, leaseDueMonitors, runMonitor } from './monitor-runner.js';
+import { deliverPendingEmails, WebhookEmailAdapter } from './delivery.js';
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error('DATABASE_URL is required');
+const emailProvider = process.env.EMAIL_PROVIDER ?? 'disabled';
+if (!['disabled', 'webhook'].includes(emailProvider)) throw new Error('EMAIL_PROVIDER must be disabled or webhook');
+const emailAdapter = emailProvider === 'webhook'
+  ? new WebhookEmailAdapter(
+      process.env.EMAIL_WEBHOOK_URL ?? (() => { throw new Error('EMAIL_WEBHOOK_URL is required'); })(),
+      process.env.EMAIL_WEBHOOK_BEARER_TOKEN
+    )
+  : null;
+const deliveryConfig = {
+  publicWebUrl: (process.env.PUBLIC_WEB_URL ?? 'http://localhost:3000').replace(/\/$/, ''),
+  accountTokenSecret: process.env.ACCOUNT_TOKEN_SECRET
+    ?? (() => { if (emailAdapter) throw new Error('ACCOUNT_TOKEN_SECRET is required'); return 'email-disabled'; })()
+};
 
 const boss = new PgBoss({ connectionString, useListenNotify: true });
 boss.on('error', (error) => console.error(JSON.stringify({ level: 'error', service: 'worker', event: 'queue_error', error: String(error) })));
@@ -43,6 +57,12 @@ await boss.work('notification-scan-pending', { batchSize: 1 }, async () => {
   const delivered = await deliverPendingInApp();
   if (delivered) {
     console.log(JSON.stringify({ level: 'info', service: 'worker', event: 'in_app_deliveries', delivered }));
+  }
+  if (emailAdapter) {
+    const email = await deliverPendingEmails(emailAdapter, deliveryConfig);
+    if (email.sent || email.failed || email.dead || email.skipped) {
+      console.log(JSON.stringify({ level: 'info', service: 'worker', event: 'email_deliveries', ...email }));
+    }
   }
 });
 

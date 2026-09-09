@@ -1,7 +1,9 @@
-import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply } from 'fastify';
+import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
   createResilientIntentInterpreter,
@@ -12,15 +14,20 @@ import {
   OpenAIPropertyAssistant
 } from '@realty/ai';
 import {
+  accountTokenId,
   alertDtoSchema,
+  createAccountToken,
+  hashAccountToken,
   monitorDtoSchema,
   opportunityDtoSchema,
   propertyHistoryEventDtoSchema,
   publicationDtoSchema,
-  searchCriteriaSchema
+  searchCriteriaSchema,
+  verifyAccountToken,
+  type AccountTokenPurpose
 } from '@realty/core';
 import { normalizeAddress } from '@realty/ingestion';
-import { databaseReady, query, withTransaction } from '@realty/db';
+import { databaseReady, query, withTransaction, type DatabaseClient } from '@realty/db';
 import {
   authenticate,
   hashPassword,
@@ -36,6 +43,7 @@ import {
   IdempotencyConflictError
 } from './publications.js';
 import { registerOperatorRoutes } from './operator-routes.js';
+import { HttpMetrics } from './metrics.js';
 
 const emailSchema = z.string().trim().toLowerCase().email().max(320);
 const registerInputSchema = z.object({
@@ -46,6 +54,21 @@ const registerInputSchema = z.object({
 const loginInputSchema = z.object({
   email: emailSchema,
   password: z.string().min(1).max(200)
+}).strict();
+const accountEmailInputSchema = z.object({ email: emailSchema }).strict();
+const accountTokenInputSchema = z.object({ token: z.string().min(20).max(500) }).strict();
+const passwordResetInputSchema = accountTokenInputSchema.extend({
+  password: z.string().min(10).max(200)
+}).strict();
+const notificationPreferenceInputSchema = z.object({
+  inAppEnabled: z.boolean().optional(),
+  emailEnabled: z.boolean().optional(),
+  digestEnabled: z.boolean().optional()
+}).strict().refine((value) => Object.keys(value).length > 0, { message: 'At least one preference is required' });
+const deliveryQuerySchema = z.object({
+  status: z.enum(['pending','processing','sent','failed','dead','skipped']).optional(),
+  channel: z.enum(['in_app','email','push','whatsapp']).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50)
 }).strict();
 const intentInputSchema = z.object({
   intent: z.string().trim().min(5).max(2000)
@@ -95,8 +118,18 @@ type UserRow = {
   email: string;
   display_name: string | null;
   role: Principal['role'];
+  email_verified_at: Date | null;
+  auth_version: number;
   password_hash: string;
   password_salt: string;
+};
+
+type AccountTokenRow = {
+  id: string;
+  user_id: string;
+  email: string;
+  purpose: AccountTokenPurpose;
+  token_hash: string;
 };
 
 type OpportunityRow = {
@@ -159,8 +192,14 @@ type AlertRow = {
   read_at: Date | null;
 };
 
-function publicUser(user: Pick<UserRow, 'id' | 'email' | 'display_name' | 'role'>) {
-  return { id: user.id, email: user.email, displayName: user.display_name, role: user.role };
+function publicUser(user: Pick<UserRow, 'id' | 'email' | 'display_name' | 'role' | 'email_verified_at'>) {
+  return {
+    id: user.id,
+    email: user.email,
+    displayName: user.display_name,
+    role: user.role,
+    emailVerified: Boolean(user.email_verified_at)
+  };
 }
 
 function opportunityDto(row: OpportunityRow) {
@@ -222,9 +261,9 @@ function alertDto(row: AlertRow) {
   });
 }
 
-function signToken(app: FastifyInstance, config: ApiConfig, user: Pick<UserRow, 'id' | 'email' | 'role'>) {
+function signToken(app: FastifyInstance, config: ApiConfig, user: Pick<UserRow, 'id' | 'email' | 'role' | 'auth_version'>) {
   return app.jwt.sign(
-    { sub: user.id, email: user.email, role: user.role },
+    { sub: user.id, email: user.email, role: user.role, version: user.auth_version },
     {
       expiresIn: config.jwtExpiresIn,
       iss: config.jwtIssuer,
@@ -234,8 +273,75 @@ function signToken(app: FastifyInstance, config: ApiConfig, user: Pick<UserRow, 
   );
 }
 
+function setSessionCookie(reply: FastifyReply, config: ApiConfig, token: string) {
+  reply.setCookie('umbral_session', token, {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: config.environment === 'production',
+    maxAge: config.sessionCookieMaxAgeSeconds
+  });
+}
+
+async function issueAccountToken(
+  client: DatabaseClient,
+  user: Pick<UserRow, 'id' | 'email'>,
+  purpose: AccountTokenPurpose,
+  config: ApiConfig
+) {
+  const id = randomUUID();
+  const token = createAccountToken({ id, userId: user.id, purpose }, config.accountTokenSecret);
+  const expiresIn = purpose === 'verify_email' ? '24 hours' : '30 minutes';
+  await client.query(`
+    UPDATE account_token SET consumed_at=now()
+    WHERE user_id=$1 AND purpose=$2 AND consumed_at IS NULL
+  `, [user.id, purpose]);
+  await client.query(`
+    INSERT INTO account_token (id, user_id, purpose, token_hash, expires_at)
+    VALUES ($1,$2,$3,$4,now() + $5::interval)
+  `, [id, user.id, purpose, hashAccountToken(token), expiresIn]);
+  const copy = purpose === 'verify_email'
+    ? { type: 'email_verification', title: 'Verificá tu email', body: 'Confirmá tu dirección para proteger tu cuenta.' }
+    : { type: 'password_recovery', title: 'Restablecé tu contraseña', body: 'Usá el enlace seguro antes de que venza.' };
+  const alert = await client.query<{ id: string }>(`
+    INSERT INTO alert (user_id, type, title, body, payload)
+    VALUES ($1,$2,$3,$4,$5::jsonb)
+    RETURNING id
+  `, [user.id, copy.type, copy.title, copy.body, JSON.stringify({ accountTokenId: id, purpose })]);
+  await client.query(`
+    INSERT INTO notification_delivery (
+      alert_id, channel, destination, status, idempotency_key, next_attempt_at
+    ) VALUES ($1,'email',$2,'pending',$3,now())
+  `, [alert.rows[0]!.id, user.email, `account:${purpose}:${id}`]);
+}
+
+async function validateAccountToken(
+  client: DatabaseClient,
+  token: string,
+  purpose: AccountTokenPurpose,
+  config: ApiConfig
+): Promise<AccountTokenRow | null> {
+  const id = accountTokenId(token);
+  if (!id) return null;
+  const result = await client.query<AccountTokenRow>(`
+    SELECT token.id, token.user_id, token.purpose, token.token_hash, app_user.email
+    FROM account_token token
+    JOIN app_user ON app_user.id=token.user_id
+    WHERE token.id=$1 AND token.purpose=$2 AND token.consumed_at IS NULL
+      AND token.expires_at > now()
+    FOR UPDATE OF token
+  `, [id, purpose]);
+  const row = result.rows[0];
+  if (!row) return null;
+  if (hashAccountToken(token) !== row.token_hash) return null;
+  return verifyAccountToken(token, { id: row.id, userId: row.user_id, purpose }, config.accountTokenSecret)
+    ? row
+    : null;
+}
+
 export async function buildApp(config: ApiConfig = loadApiConfig()): Promise<FastifyInstance> {
-  const app = Fastify({ logger: true, trustProxy: false });
+  const app = Fastify({ logger: true, trustProxy: config.trustProxy });
+  const metrics = new HttpMetrics();
   const intentInterpreter = createResilientIntentInterpreter({
     primary: config.aiProvider === 'openai'
       ? new OpenAIIntentInterpreter({
@@ -264,20 +370,37 @@ export async function buildApp(config: ApiConfig = loadApiConfig()): Promise<Fas
   await app.register(cors, {
     origin(origin, callback) {
       if (!origin || config.corsOrigins.has(origin)) callback(null, true);
-      else callback(new Error('Origin is not allowed'), false);
+      else callback(null, false);
     },
     credentials: true
   });
   await app.register(rateLimit, { global: true, max: config.rateLimitMax, timeWindow: '1 minute' });
+  await app.register(cookie);
   await app.register(jwt, {
     secret: config.jwtSecret,
     sign: { iss: config.jwtIssuer, aud: config.jwtAudience, algorithm: 'HS256' },
+    cookie: { cookieName: 'umbral_session', signed: false },
     verify: {
       allowedIss: config.jwtIssuer,
       allowedAud: config.jwtAudience,
       algorithms: ['HS256'],
       requiredClaims: ['sub', 'iss', 'aud', 'exp']
     }
+  });
+
+  app.addHook('onRequest', async (request, reply) => {
+    reply.header('x-request-id', request.id);
+    if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) return;
+    const origin = request.headers.origin;
+    if (origin && !config.corsOrigins.has(origin)) {
+      return reply.code(403).send({ error: { code: 'invalid_origin', message: 'Request origin is not allowed' } });
+    }
+    if (request.cookies.umbral_session && !request.headers.authorization && !origin) {
+      return reply.code(403).send({ error: { code: 'invalid_origin', message: 'Request origin is required' } });
+    }
+  });
+  app.addHook('onResponse', async (request, reply) => {
+    metrics.record(request.method, request.routeOptions.url ?? 'unmatched', reply.statusCode, reply.elapsedTime);
   });
 
   app.setErrorHandler((error: FastifyError, request, reply) => {
@@ -297,6 +420,9 @@ export async function buildApp(config: ApiConfig = loadApiConfig()): Promise<Fas
   app.get('/ready', { config: { rateLimit: false } }, async (_request, reply) => {
     const ready = await databaseReady();
     return reply.code(ready ? 200 : 503).send({ ok: ready, service: 'api', dependency: 'postgres' });
+  });
+  app.get('/metrics', { config: { rateLimit: false } }, async (_request, reply) => {
+    return reply.type('text/plain; version=0.0.4; charset=utf-8').send(metrics.render());
   });
 
   app.post('/v1/intents/interpret', {
@@ -320,7 +446,7 @@ export async function buildApp(config: ApiConfig = loadApiConfig()): Promise<Fas
         const inserted = await client.query<UserRow>(`
           INSERT INTO app_user (email, display_name)
           VALUES ($1, $2)
-          RETURNING id, email, display_name, role
+          RETURNING id, email, display_name, role, email_verified_at, auth_version
         `, [input.email, input.displayName ?? null]);
         const created = inserted.rows[0]!;
         await client.query(`
@@ -328,6 +454,7 @@ export async function buildApp(config: ApiConfig = loadApiConfig()): Promise<Fas
           VALUES ($1, $2, $3)
         `, [created.id, password.hash, password.salt]);
         await client.query('INSERT INTO notification_preference (user_id) VALUES ($1)', [created.id]);
+        await issueAccountToken(client, created, 'verify_email', config);
         await client.query(`
           INSERT INTO audit_event (actor_user_id, action, resource_type, resource_id)
           VALUES ($1, 'user.registered', 'user', $2)
@@ -335,7 +462,9 @@ export async function buildApp(config: ApiConfig = loadApiConfig()): Promise<Fas
         return created;
       });
 
-      return reply.code(201).send({ user: publicUser(user), token: signToken(app, config, user) });
+      const token = signToken(app, config, user);
+      setSessionCookie(reply, config, token);
+      return reply.code(201).send({ user: publicUser(user), token });
     } catch (error) {
       if ((error as { code?: string }).code === '23505') {
         return reply.code(409).send({ error: { code: 'email_in_use', message: 'An account already exists for this email' } });
@@ -348,7 +477,8 @@ export async function buildApp(config: ApiConfig = loadApiConfig()): Promise<Fas
     const parsed = loginInputSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: { code: 'invalid_request', details: parsed.error.flatten() } });
     const result = await query<UserRow>(`
-      SELECT u.id, u.email, u.display_name, u.role, c.password_hash, c.password_salt
+      SELECT u.id, u.email, u.display_name, u.role, u.email_verified_at, u.auth_version,
+             c.password_hash, c.password_salt
       FROM app_user u
       JOIN user_credential c ON c.user_id = u.id
       WHERE u.email = $1
@@ -359,16 +489,196 @@ export async function buildApp(config: ApiConfig = loadApiConfig()): Promise<Fas
     if (!user || !valid) {
       return reply.code(401).send({ error: { code: 'invalid_credentials', message: 'Email or password is incorrect' } });
     }
-    return { user: publicUser(user), token: signToken(app, config, user) };
+    const token = signToken(app, config, user);
+    setSessionCookie(reply, config, token);
+    return { user: publicUser(user), token };
+  });
+
+  app.post('/v1/auth/logout', async (_request, reply) => {
+    reply.clearCookie('umbral_session', {
+      path: '/', sameSite: 'lax', secure: config.environment === 'production'
+    });
+    return reply.code(204).send();
+  });
+
+  app.post('/v1/auth/verification/request', {
+    config: { rateLimit: { max: 5, timeWindow: '15 minutes' } }
+  }, async (request, reply) => {
+    const parsed = accountEmailInputSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: { code: 'invalid_request', details: parsed.error.flatten() } });
+    await withTransaction(async (client) => {
+      const result = await client.query<Pick<UserRow, 'id' | 'email' | 'email_verified_at'>>(`
+        SELECT id, email, email_verified_at FROM app_user WHERE email=$1 FOR UPDATE
+      `, [parsed.data.email]);
+      const user = result.rows[0];
+      if (!user || user.email_verified_at) return;
+      const recent = await client.query(`
+        SELECT 1 FROM account_token
+        WHERE user_id=$1 AND purpose='verify_email' AND consumed_at IS NULL
+          AND created_at > now() - interval '5 minutes'
+        LIMIT 1
+      `, [user.id]);
+      if (!recent.rowCount) await issueAccountToken(client, user, 'verify_email', config);
+    });
+    return reply.code(202).send({ accepted: true });
+  });
+
+  app.post('/v1/auth/verification/confirm', {
+    config: { rateLimit: { max: 10, timeWindow: '15 minutes' } }
+  }, async (request, reply) => {
+    const parsed = accountTokenInputSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: { code: 'invalid_request', details: parsed.error.flatten() } });
+    const verified = await withTransaction(async (client) => {
+      const token = await validateAccountToken(client, parsed.data.token, 'verify_email', config);
+      if (!token) return false;
+      await client.query('UPDATE account_token SET consumed_at=now() WHERE id=$1', [token.id]);
+      await client.query('UPDATE app_user SET email_verified_at=COALESCE(email_verified_at, now()), updated_at=now() WHERE id=$1', [token.user_id]);
+      await client.query(`
+        INSERT INTO audit_event (actor_user_id, action, resource_type, resource_id)
+        VALUES ($1::uuid,'user.email_verified','user',$1::text)
+      `, [token.user_id]);
+      return true;
+    });
+    if (!verified) return reply.code(400).send({ error: { code: 'invalid_or_expired_token', message: 'The verification link is invalid or expired' } });
+    return { verified: true };
+  });
+
+  app.post('/v1/auth/password/request', {
+    config: { rateLimit: { max: 5, timeWindow: '15 minutes' } }
+  }, async (request, reply) => {
+    const parsed = accountEmailInputSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: { code: 'invalid_request', details: parsed.error.flatten() } });
+    await withTransaction(async (client) => {
+      const result = await client.query<Pick<UserRow, 'id' | 'email'>>(`
+        SELECT id, email FROM app_user WHERE email=$1 FOR UPDATE
+      `, [parsed.data.email]);
+      const user = result.rows[0];
+      if (!user) return;
+      const recent = await client.query(`
+        SELECT 1 FROM account_token
+        WHERE user_id=$1 AND purpose='reset_password' AND consumed_at IS NULL
+          AND created_at > now() - interval '5 minutes'
+        LIMIT 1
+      `, [user.id]);
+      if (!recent.rowCount) await issueAccountToken(client, user, 'reset_password', config);
+    });
+    return reply.code(202).send({ accepted: true });
+  });
+
+  app.post('/v1/auth/password/reset', {
+    config: { rateLimit: { max: 10, timeWindow: '15 minutes' } }
+  }, async (request, reply) => {
+    const parsed = passwordResetInputSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: { code: 'invalid_request', details: parsed.error.flatten() } });
+    const password = await hashPassword(parsed.data.password);
+    const reset = await withTransaction(async (client) => {
+      const token = await validateAccountToken(client, parsed.data.token, 'reset_password', config);
+      if (!token) return false;
+      await client.query(`
+        UPDATE user_credential
+        SET password_hash=$2, password_salt=$3, algorithm='scrypt-v1', updated_at=now()
+        WHERE user_id=$1
+      `, [token.user_id, password.hash, password.salt]);
+      await client.query('UPDATE app_user SET auth_version=auth_version+1, updated_at=now() WHERE id=$1', [token.user_id]);
+      await client.query('UPDATE account_token SET consumed_at=now() WHERE user_id=$1 AND consumed_at IS NULL', [token.user_id]);
+      await client.query(`
+        INSERT INTO audit_event (actor_user_id, action, resource_type, resource_id)
+        VALUES ($1::uuid,'user.password_reset','user',$1::text)
+      `, [token.user_id]);
+      return true;
+    });
+    if (!reset) return reply.code(400).send({ error: { code: 'invalid_or_expired_token', message: 'The reset link is invalid or expired' } });
+    reply.clearCookie('umbral_session', {
+      path: '/', sameSite: 'lax', secure: config.environment === 'production'
+    });
+    return { reset: true };
   });
 
   app.get('/v1/me', { preHandler: authenticate }, async (request, reply) => {
     const result = await query<UserRow>(`
-      SELECT id, email, display_name, role FROM app_user WHERE id = $1
+      SELECT id, email, display_name, role, email_verified_at, auth_version FROM app_user WHERE id = $1
     `, [request.user.sub]);
     const user = result.rows[0];
     if (!user) return reply.code(401).send({ error: { code: 'unauthorized', message: 'Account is no longer active' } });
     return { user: publicUser(user) };
+  });
+
+  app.get('/v1/notification-preferences', { preHandler: authenticate }, async (request) => {
+    const result = await query<{ in_app_enabled: boolean; email_enabled: boolean; digest_enabled: boolean }>(`
+      SELECT in_app_enabled, email_enabled, digest_enabled
+      FROM notification_preference WHERE user_id=$1
+    `, [request.user.sub]);
+    const preference = result.rows[0] ?? { in_app_enabled: true, email_enabled: true, digest_enabled: true };
+    return {
+      inAppEnabled: preference.in_app_enabled,
+      emailEnabled: preference.email_enabled,
+      digestEnabled: preference.digest_enabled
+    };
+  });
+
+  app.patch('/v1/notification-preferences', { preHandler: authenticate }, async (request, reply) => {
+    const parsed = notificationPreferenceInputSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: { code: 'invalid_request', details: parsed.error.flatten() } });
+    const result = await query<{ in_app_enabled: boolean; email_enabled: boolean; digest_enabled: boolean }>(`
+      INSERT INTO notification_preference (user_id, in_app_enabled, email_enabled, digest_enabled)
+      VALUES ($1,COALESCE($2,true),COALESCE($3,true),COALESCE($4,true))
+      ON CONFLICT (user_id) DO UPDATE SET
+        in_app_enabled=COALESCE($2,notification_preference.in_app_enabled),
+        email_enabled=COALESCE($3,notification_preference.email_enabled),
+        digest_enabled=COALESCE($4,notification_preference.digest_enabled), updated_at=now()
+      RETURNING in_app_enabled, email_enabled, digest_enabled
+    `, [request.user.sub, parsed.data.inAppEnabled ?? null, parsed.data.emailEnabled ?? null, parsed.data.digestEnabled ?? null]);
+    const preference = result.rows[0]!;
+    return {
+      inAppEnabled: preference.in_app_enabled,
+      emailEnabled: preference.email_enabled,
+      digestEnabled: preference.digest_enabled
+    };
+  });
+
+  app.get('/v1/admin/notification-deliveries', { preHandler: authenticate }, async (request, reply) => {
+    if (request.user.role !== 'admin') return reply.code(403).send({ error: { code: 'forbidden', message: 'Admin role required' } });
+    const parsed = deliveryQuerySchema.safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: { code: 'invalid_request', details: parsed.error.flatten() } });
+    const result = await query<{
+      id: string; channel: string; status: string; attempt_count: number; max_attempts: number;
+      next_attempt_at: Date; lease_until: Date | null; last_error: string | null; created_at: Date;
+    }>(`
+      SELECT id, channel, status, attempt_count, max_attempts, next_attempt_at,
+             lease_until, last_error, created_at
+      FROM notification_delivery
+      WHERE ($1::text IS NULL OR status=$1) AND ($2::text IS NULL OR channel=$2)
+      ORDER BY created_at DESC LIMIT $3
+    `, [parsed.data.status ?? null, parsed.data.channel ?? null, parsed.data.limit]);
+    return { items: result.rows.map((row) => ({
+      id: row.id, channel: row.channel, status: row.status, attemptCount: row.attempt_count,
+      maxAttempts: row.max_attempts, nextAttemptAt: row.next_attempt_at.toISOString(),
+      leaseUntil: row.lease_until?.toISOString() ?? null, lastError: row.last_error,
+      createdAt: row.created_at.toISOString()
+    })) };
+  });
+
+  app.post('/v1/admin/notification-deliveries/:id/retry', { preHandler: authenticate }, async (request, reply) => {
+    if (request.user.role !== 'admin') return reply.code(403).send({ error: { code: 'forbidden', message: 'Admin role required' } });
+    const parsed = idParamsSchema.safeParse(request.params);
+    if (!parsed.success) return reply.code(400).send({ error: { code: 'invalid_request' } });
+    const retried = await withTransaction(async (client) => {
+      const result = await client.query(`
+        UPDATE notification_delivery
+        SET status='pending', attempt_count=0, next_attempt_at=now(), lease_until=NULL,
+            last_error=NULL, updated_at=now()
+        WHERE id=$1 AND status IN ('failed','dead')
+        RETURNING id
+      `, [parsed.data.id]);
+      if (!result.rowCount) return false;
+      await client.query(`
+        INSERT INTO audit_event (actor_user_id, action, resource_type, resource_id)
+        VALUES ($1,'notification_delivery.retried','notification_delivery',$2)
+      `, [request.user.sub, parsed.data.id]);
+      return true;
+    });
+    if (!retried) return reply.code(404).send({ error: { code: 'not_found', message: 'Retryable delivery not found' } });
+    return reply.code(202).send({ accepted: true });
   });
 
   app.get('/v1/opportunities', async (request, reply) => {

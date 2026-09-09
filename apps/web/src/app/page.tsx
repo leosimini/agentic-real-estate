@@ -51,7 +51,9 @@ import {
 } from '../lib/api';
 
 type Tab = 'discover' | 'monitors' | 'publish' | 'saved' | 'profile';
-type User = { id: string; email: string; displayName: string | null; role: string };
+type AuthMode = 'login' | 'register' | 'recover' | 'reset';
+type User = { id: string; email: string; displayName: string | null; role: string; emailVerified: boolean };
+type NotificationPreference = { inAppEnabled: boolean; emailEnabled: boolean; digestEnabled: boolean };
 
 const cities = ['Buenos Aires', 'Córdoba', 'Rosario', 'Mar del Plata', 'Mendoza'];
 const starterIntent = 'Departamento de 3 ambientes en Palermo o Colegiales, hasta USD 250.000. Con balcón y sin planta baja.';
@@ -139,13 +141,15 @@ export default function Home() {
   const [operatorProfile, setOperatorProfile] = useState<OperatorProfile | null>(null);
   const [managedPublications, setManagedPublications] = useState<ManagedPublication[]>([]);
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
+  const [notificationPreference, setNotificationPreference] = useState<NotificationPreference | null>(null);
   const [comparisonIds, setComparisonIds] = useState<string[]>([]);
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [detail, setDetail] = useState<OpportunityDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('register');
+  const [authMode, setAuthMode] = useState<AuthMode>('register');
+  const [resetToken, setResetToken] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
 
@@ -163,7 +167,7 @@ export default function Home() {
   }, [criteria]);
 
   const loadPrivateData = useCallback(async (currentToken: string) => {
-    const [me, monitorData, alertData, savedData, publicationData, inquiryData, profile] = await Promise.all([
+    const [me, monitorData, alertData, savedData, publicationData, inquiryData, profile, preference] = await Promise.all([
       api<{ user: User }>('/v1/me', {}, currentToken),
       api<{ items: Monitor[] }>('/v1/monitors', {}, currentToken),
       api<{ items: Alert[] }>('/v1/alerts', {}, currentToken),
@@ -173,7 +177,8 @@ export default function Home() {
       api<OperatorProfile>('/v1/operators/profile', {}, currentToken).catch((error) => {
         if (error instanceof ApiError && error.status === 404) return null;
         throw error;
-      })
+      }),
+      api<NotificationPreference>('/v1/notification-preferences', {}, currentToken)
     ]);
     setUser(me.user);
     setMonitors(monitorData.items);
@@ -182,6 +187,7 @@ export default function Home() {
     setManagedPublications(publicationData.items);
     setInquiries(inquiryData.items);
     setOperatorProfile(profile);
+    setNotificationPreference(preference);
   }, []);
 
   useEffect(() => {
@@ -192,13 +198,23 @@ export default function Home() {
         .then(setDetail)
         .catch((error) => setNotice(errorMessage(error)));
     }
-    const stored = window.localStorage.getItem('agentic-real-estate-token');
-    if (stored) {
-      setToken(stored);
-      void loadPrivateData(stored).catch(() => {
-        window.localStorage.removeItem('agentic-real-estate-token');
-        setToken(null);
-      });
+    window.localStorage.removeItem('agentic-real-estate-token');
+    void loadPrivateData('cookie-session')
+      .then(() => setToken('cookie-session'))
+      .catch(() => setToken(null));
+    const parameters = new URLSearchParams(window.location.search);
+    const verificationToken = parameters.get('verify_email');
+    const requestedReset = parameters.get('reset_password');
+    if (verificationToken) {
+      void api<{ verified: true }>('/v1/auth/verification/confirm', {
+        method: 'POST', body: JSON.stringify({ token: verificationToken })
+      }).then(() => setNotice('Email verificado. Tu cuenta ya está protegida.'))
+        .catch((error) => setNotice(errorMessage(error)))
+        .finally(() => window.history.replaceState({}, '', window.location.pathname));
+    } else if (requestedReset) {
+      setResetToken(requestedReset);
+      setAuthMode('reset');
+      setAuthOpen(true);
     }
   }, []); // Initial hydration only.
 
@@ -409,17 +425,18 @@ export default function Home() {
     }
   }
 
-  function onAuthenticated(nextToken: string, nextUser: User) {
-    window.localStorage.setItem('agentic-real-estate-token', nextToken);
-    setToken(nextToken);
+  function onAuthenticated(_nextToken: string, nextUser: User) {
+    setToken('cookie-session');
     setUser(nextUser);
     setAuthOpen(false);
-    setNotice(`Hola${nextUser.displayName ? `, ${nextUser.displayName}` : ''}. Tu espacio ya está listo.`);
-    void loadPrivateData(nextToken).catch((error) => setNotice(errorMessage(error)));
+    setNotice(nextUser.emailVerified
+      ? `Hola${nextUser.displayName ? `, ${nextUser.displayName}` : ''}. Tu espacio ya está listo.`
+      : 'Tu espacio está listo. Revisá tu email para verificar la cuenta.');
+    void loadPrivateData('cookie-session').catch((error) => setNotice(errorMessage(error)));
   }
 
-  function logout() {
-    window.localStorage.removeItem('agentic-real-estate-token');
+  async function logout() {
+    await api<void>('/v1/auth/logout', { method: 'POST' }).catch(() => undefined);
     setToken(null);
     setUser(null);
     setMonitors([]);
@@ -428,7 +445,33 @@ export default function Home() {
     setOperatorProfile(null);
     setManagedPublications([]);
     setInquiries([]);
+    setNotificationPreference(null);
     setActiveTab('discover');
+  }
+
+  async function resendVerification() {
+    if (!user) return;
+    try {
+      await api('/v1/auth/verification/request', {
+        method: 'POST', body: JSON.stringify({ email: user.email })
+      });
+      setNotice('Si la cuenta requiere verificación, enviamos un nuevo enlace.');
+    } catch (error) {
+      setNotice(errorMessage(error));
+    }
+  }
+
+  async function updateNotificationPreference(update: Partial<NotificationPreference>) {
+    if (!token) return;
+    try {
+      const preference = await api<NotificationPreference>('/v1/notification-preferences', {
+        method: 'PATCH', body: JSON.stringify(update)
+      }, token);
+      setNotificationPreference(preference);
+      setNotice('Preferencias de avisos actualizadas.');
+    } catch (error) {
+      setNotice(errorMessage(error));
+    }
   }
 
   return (
@@ -478,7 +521,7 @@ export default function Home() {
         {activeTab === 'monitors' && <Monitors monitors={monitors} alerts={alerts} authenticated={Boolean(token)} onToggle={toggleMonitor} onRead={markRead} onDiscover={() => setActiveTab('discover')} />}
         {activeTab === 'publish' && <Publish token={token} onNeedAuth={() => setAuthOpen(true)} onNotice={setNotice} />}
         {activeTab === 'saved' && <Saved items={saved} authenticated={Boolean(token)} comparisonIds={new Set(comparisonIds)} onOpen={openDetail} onRemove={toggleSaved} onCompare={toggleComparison} onDiscover={() => setActiveTab('discover')} />}
-        {activeTab === 'profile' && <Profile user={user} operatorProfile={operatorProfile} publications={managedPublications} inquiries={inquiries} onLogin={() => setAuthOpen(true)} onLogout={logout} onCreateOperator={createOperatorProfile} onUpdatePublication={updateManagedPublication} />}
+        {activeTab === 'profile' && <Profile user={user} notificationPreference={notificationPreference} operatorProfile={operatorProfile} publications={managedPublications} inquiries={inquiries} onLogin={() => setAuthOpen(true)} onLogout={logout} onResendVerification={resendVerification} onUpdateNotificationPreference={updateNotificationPreference} onCreateOperator={createOperatorProfile} onUpdatePublication={updateManagedPublication} />}
       </main>
 
       <nav className="bottomNav" aria-label="Navegación principal" aria-hidden={modalOpen} inert={modalOpen}>
@@ -493,7 +536,7 @@ export default function Home() {
 
       {detail && <DetailPanel detail={detail} isSaved={savedIds.has(detail.opportunity.id)} operatorProfile={operatorProfile} authenticated={Boolean(token)} onClose={() => setDetail(null)} onSave={() => toggleSaved(detail.opportunity)} onInquiry={sendInquiry} onClaim={claimPublication} onNeedAuth={() => { setDetail(null); setAuthOpen(true); }} />}
       {comparisonOpen && <ComparisonPanel items={comparisonItems} criteria={criteria} onClose={() => setComparisonOpen(false)} onRemove={(id) => setComparisonIds((current) => current.filter((item) => item !== id))} />}
-      {authOpen && <AuthPanel mode={authMode} setMode={setAuthMode} onClose={() => setAuthOpen(false)} onAuthenticated={onAuthenticated} />}
+      {authOpen && <AuthPanel mode={authMode} resetToken={resetToken} setMode={setAuthMode} onClose={() => setAuthOpen(false)} onAuthenticated={onAuthenticated} onNotice={setNotice} />}
     </div>
   );
 }
@@ -676,11 +719,14 @@ function Publish({ token, onNeedAuth, onNotice }: { token: string | null; onNeed
 
 type ProfileProps = {
   user: User | null;
+  notificationPreference: NotificationPreference | null;
   operatorProfile: OperatorProfile | null;
   publications: ManagedPublication[];
   inquiries: Inquiry[];
   onLogin: () => void;
   onLogout: () => void;
+  onResendVerification: () => void;
+  onUpdateNotificationPreference: (update: Partial<NotificationPreference>) => void;
   onCreateOperator: (input: { displayName: string; licenseNumber?: string; websiteUrl?: string }) => void;
   onUpdatePublication: (publication: ManagedPublication, update: { status?: 'active' | 'paused' | 'removed'; declaredAvailability?: ManagedPublication['declaredAvailability'] }) => void;
 };
@@ -697,7 +743,8 @@ function Profile(props: ProfileProps) {
   }
   return <section className="pageSection">
     <PageHeading kicker="Cuenta y confianza" title={props.user?.displayName ?? 'Tu espacio'} body={props.user ? props.user.email : 'Creá una cuenta para conservar búsquedas, guardados y alertas.'} />
-    <div className="profileCard"><span className="largeAvatar">{props.user?.displayName?.[0] ?? props.user?.email[0]?.toUpperCase() ?? '?'}</span><div><h2>{props.user ? 'Sesión activa' : 'Todavía no ingresaste'}</h2><p>{props.user ? 'Tus datos y acciones están aislados de otras cuentas.' : 'Sólo pedimos lo necesario para guardar tu actividad.'}</p></div><button className={props.user ? 'secondaryButton' : 'primaryButton'} onClick={props.user ? props.onLogout : props.onLogin}>{props.user ? 'Cerrar sesión' : 'Ingresar'}</button></div>
+    <div className="profileCard"><span className="largeAvatar">{props.user?.displayName?.[0] ?? props.user?.email[0]?.toUpperCase() ?? '?'}</span><div><h2>{props.user ? 'Sesión activa' : 'Todavía no ingresaste'}</h2><p>{props.user ? props.user.emailVerified ? 'Email verificado y sesión protegida.' : 'Tu email todavía necesita verificación.' : 'Sólo pedimos lo necesario para guardar tu actividad.'}</p></div><div className="accountActions">{props.user && !props.user.emailVerified && <button className="quietButton" onClick={props.onResendVerification}>Reenviar verificación</button>}<button className={props.user ? 'secondaryButton' : 'primaryButton'} onClick={props.user ? props.onLogout : props.onLogin}>{props.user ? 'Cerrar sesión' : 'Ingresar'}</button></div></div>
+    {props.user && props.notificationPreference && <section className="notificationPreferences"><div><span className="sectionKicker"><Bell size={15} /> Avisos</span><h2>Elegí cómo enterarte</h2><p>Los emails sólo salen después de verificar la cuenta. Podés pausar todos los resúmenes sin perder tus monitores.</p></div><div><label><input type="checkbox" checked={props.notificationPreference.inAppEnabled} onChange={(event) => props.onUpdateNotificationPreference({ inAppEnabled: event.target.checked })} /> Avisos dentro de Umbral</label><label><input type="checkbox" checked={props.notificationPreference.emailEnabled} onChange={(event) => props.onUpdateNotificationPreference({ emailEnabled: event.target.checked })} /> Resúmenes por email</label><label><input type="checkbox" checked={props.notificationPreference.digestEnabled} onChange={(event) => props.onUpdateNotificationPreference({ digestEnabled: event.target.checked })} /> Recibir resúmenes de cambios</label></div></section>}
     {props.user && !props.operatorProfile && <section className="professionalCard"><div><span className="sectionKicker"><BadgeCheck size={15} /> Espacio profesional</span><h2>¿Trabajás con propiedades?</h2><p>Creá un perfil para gestionar inventario, solicitar la representación de publicaciones agregadas y recibir consultas sin desviar contactos a terceros.</p></div><form onSubmit={submitOperator}><Field label="Nombre comercial"><input name="displayName" required minLength={2} defaultValue={props.user.displayName ?? ''} /></Field><Field label="Matrícula"><input name="licenseNumber" placeholder="Ej. CPI 1234" /></Field><Field label="Sitio web"><input name="websiteUrl" type="url" placeholder="https://" /></Field><button className="primaryButton">Crear perfil profesional</button></form></section>}
     {props.operatorProfile && <section className="professionalWorkspace"><div className="workspaceHeading"><div><span className="sectionKicker"><BadgeCheck size={15} /> Operador</span><h2>{props.operatorProfile.displayName}</h2><p>{props.operatorProfile.licenseNumber ?? 'Matrícula no informada'}</p></div><span className={`verificationBadge ${props.operatorProfile.verificationStatus}`}>{verificationLabel(props.operatorProfile.verificationStatus)}</span></div><div className="operatorMetrics"><span><strong>{props.publications.length}</strong> publicaciones</span><span><strong>{props.publications.filter((item) => item.status === 'active').length}</strong> activas</span><span><strong>{props.inquiries.filter((item) => item.status === 'new').length}</strong> consultas nuevas</span></div><div className="twoColumn operatorColumns"><div><h3 className="subheading">Mis publicaciones</h3>{props.publications.length ? <div className="stack">{props.publications.map((publication) => <article className="managedCard" key={publication.id}><span className="monitorStatus"><span className={publication.status === 'active' ? 'statusDot active' : 'statusDot'} />{publication.status === 'active' ? 'Activa' : publication.status === 'paused' ? 'En pausa' : 'Retirada'}</span><h4>{publication.address ?? publication.title}</h4><p>{formatMoney(publication.price, publication.currency)} · versión {publication.version}</p><div className="managedActions"><button className="secondaryButton" onClick={() => props.onUpdatePublication(publication, { status: publication.status === 'active' ? 'paused' : 'active', declaredAvailability: publication.status === 'active' ? 'unavailable' : 'available' })}>{publication.status === 'active' ? 'Pausar' : 'Reactivar'}</button><button className="quietButton" onClick={() => props.onUpdatePublication(publication, { status: 'removed', declaredAvailability: publication.propertyStatus === 'rented' ? 'rented' : 'sold' })}>Marcar cerrada</button></div></article>)}</div> : <p className="mutedCopy">Tus publicaciones directas y las representaciones aprobadas aparecerán acá.</p>}</div><div><h3 className="subheading"><Inbox size={18} /> Consultas recibidas</h3>{props.inquiries.length ? <div className="stack">{props.inquiries.map((inquiry) => <article className="inquiryCard" key={inquiry.id}><span>{inquiry.status === 'new' ? 'Nueva' : 'En seguimiento'}</span><p>{inquiry.message}</p><time>{formatDate(inquiry.createdAt)}</time></article>)}</div> : <p className="mutedCopy">Todavía no recibiste consultas.</p>}</div></div></section>}
     <div className="trustGrid"><article><ShieldCheck /><h3>Decisiones explicables</h3><p>La fuente, frescura y confianza quedan visibles.</p></article><article><Eye /><h3>Tu señal, sin ruido</h3><p>Los monitores suprimen cambios que no importan.</p></article><article><MessageCircle /><h3>IA bajo tu control</h3><p>Los criterios inferidos siempre se pueden editar.</p></article></div>
@@ -768,19 +815,50 @@ function ComparisonFact({ label, value }: { label: string; value: string }) {
   return <div><dt>{label}</dt><dd>{value}</dd></div>;
 }
 
-function AuthPanel({ mode, setMode, onClose, onAuthenticated }: { mode: 'login' | 'register'; setMode: (mode: 'login' | 'register') => void; onClose: () => void; onAuthenticated: (token: string, user: User) => void }) {
+function AuthPanel({ mode, resetToken, setMode, onClose, onAuthenticated, onNotice }: { mode: AuthMode; resetToken: string | null; setMode: (mode: AuthMode) => void; onClose: () => void; onAuthenticated: (token: string, user: User) => void; onNotice: (message: string) => void }) {
   const dialogRef = useDialogFocus<HTMLElement>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [completed, setCompleted] = useState<string | null>(null);
+  const copy = mode === 'register'
+    ? { title: 'Creá tu espacio', body: 'Guardá oportunidades, activá monitores y recibí cambios importantes sin perder el hilo.' }
+    : mode === 'recover'
+      ? { title: 'Recuperá el acceso', body: 'Te enviaremos un enlace de un solo uso si encontramos esa cuenta.' }
+      : mode === 'reset'
+        ? { title: 'Elegí una nueva contraseña', body: 'El enlace vence pronto y sólo puede usarse una vez.' }
+        : { title: 'Volvé a tu espacio', body: 'Retomá tu búsqueda, tus guardados y los cambios que siguen activos.' };
+  function switchMode(next: AuthMode) {
+    setError(null);
+    setCompleted(null);
+    setMode(next);
+  }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(null);
     const data = new FormData(event.currentTarget);
     try {
+      if (mode === 'recover') {
+        await api('/v1/auth/password/request', {
+          method: 'POST', body: JSON.stringify({ email: data.get('email') })
+        });
+        setCompleted('Si existe una cuenta con ese email, enviamos un enlace seguro para restablecerla.');
+        return;
+      }
+      if (mode === 'reset') {
+        if (!resetToken) throw new Error('El enlace para restablecer la contraseña no es válido.');
+        await api('/v1/auth/password/reset', {
+          method: 'POST', body: JSON.stringify({ token: resetToken, password: data.get('password') })
+        });
+        window.history.replaceState({}, '', window.location.pathname);
+        setCompleted('Contraseña actualizada. Todas las sesiones anteriores fueron cerradas.');
+        onNotice('Contraseña actualizada. Ya podés volver a ingresar.');
+        return;
+      }
       const result = await api<{ token: string; user: User }>(`/v1/auth/${mode}`, { method: 'POST', body: JSON.stringify({ email: data.get('email'), password: data.get('password'), ...(mode === 'register' ? { displayName: data.get('displayName') || undefined } : {}) }) });
       onAuthenticated(result.token, result.user);
     } catch (caught) { setError(errorMessage(caught)); } finally { setBusy(false); }
   }
-  return <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section ref={dialogRef} className="authPanel" role="dialog" aria-modal="true" aria-labelledby="auth-title"><div className="panelHeader"><Brand /><button className="iconButton" onClick={onClose} aria-label="Cerrar" autoFocus><X /></button></div><div className="authCopy"><span className="sectionKicker">Tu búsqueda, siempre disponible</span><h2 id="auth-title">{mode === 'register' ? 'Creá tu espacio' : 'Volvé a tu espacio'}</h2><p>Guardá oportunidades, activá monitores y recibí cambios importantes sin perder el hilo.</p></div><form onSubmit={submit}>{mode === 'register' && <Field label="Nombre"><input name="displayName" minLength={2} autoComplete="name" placeholder="Cómo querés que te llamemos" /></Field>}<Field label="Email"><input name="email" type="email" required autoComplete="email" placeholder="vos@ejemplo.com" /></Field><Field label="Contraseña"><input name="password" type="password" required minLength={mode === 'register' ? 10 : 1} autoComplete={mode === 'register' ? 'new-password' : 'current-password'} placeholder={mode === 'register' ? 'Mínimo 10 caracteres' : 'Tu contraseña'} /></Field>{error && <p className="formError" role="alert">{error}</p>}<button className="primaryButton submitButton" disabled={busy}>{busy ? <><LoaderCircle className="spin" /> Un momento…</> : mode === 'register' ? 'Crear cuenta' : 'Ingresar'}</button></form><button className="modeSwitch" onClick={() => setMode(mode === 'register' ? 'login' : 'register')}>{mode === 'register' ? '¿Ya tenés cuenta? Ingresá' : '¿Primera vez? Creá tu cuenta'}</button></section></div>;
+  const action = mode === 'register' ? 'Crear cuenta' : mode === 'login' ? 'Ingresar' : mode === 'recover' ? 'Enviar enlace seguro' : 'Cambiar contraseña';
+  return <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><section ref={dialogRef} className="authPanel" role="dialog" aria-modal="true" aria-labelledby="auth-title"><div className="panelHeader"><Brand /><button className="iconButton" onClick={onClose} aria-label="Cerrar" autoFocus><X /></button></div><div className="authCopy"><span className="sectionKicker">Tu búsqueda, siempre disponible</span><h2 id="auth-title">{copy.title}</h2><p>{copy.body}</p></div>{completed ? <div className="authComplete" role="status"><Check /><p>{completed}</p><button className="primaryButton" onClick={() => switchMode('login')}>Ir a ingresar</button></div> : <form onSubmit={submit}>{mode === 'register' && <Field label="Nombre"><input name="displayName" minLength={2} autoComplete="name" placeholder="Cómo querés que te llamemos" /></Field>}{mode !== 'reset' && <Field label="Email"><input name="email" type="email" required autoComplete="email" placeholder="vos@ejemplo.com" /></Field>}{mode !== 'recover' && <Field label={mode === 'reset' ? 'Nueva contraseña' : 'Contraseña'}><input name="password" type="password" required minLength={mode === 'login' ? 1 : 10} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} placeholder={mode === 'login' ? 'Tu contraseña' : 'Mínimo 10 caracteres'} /></Field>}{error && <p className="formError" role="alert">{error}</p>}<button className="primaryButton submitButton" disabled={busy}>{busy ? <><LoaderCircle className="spin" /> Un momento…</> : action}</button></form>}<div className="authModes">{mode !== 'login' && <button className="modeSwitch" onClick={() => switchMode('login')}>Volver a ingresar</button>}{mode === 'login' && <><button className="modeSwitch" onClick={() => switchMode('register')}>¿Primera vez? Creá tu cuenta</button><button className="modeSwitch" onClick={() => switchMode('recover')}>Olvidé mi contraseña</button></>}</div></section></div>;
 }
 
 function PageHeading({ kicker, title, body, action }: { kicker: string; title: string; body: string; action?: React.ReactNode }) {

@@ -27,6 +27,8 @@ The primary object is a canonical property opportunity, not a source listing. Mu
 
 Intent interpretation defaults to local deterministic rules. To enable the OpenAI provider, set `AI_PROVIDER=openai` and provide `OPENAI_API_KEY` only to the API service. The browser never receives provider credentials, and every interpretation remains an editable draft until the user confirms it.
 
+Browser authentication uses a revocable `HttpOnly`, same-site session cookie; bearer tokens remain available for non-browser API clients. Account verification and password recovery use expiring one-time links. Set `EMAIL_PROVIDER=webhook` plus the webhook URL and credentials to deliver those links and verified-user monitor digests. See `docs/operations.md` for deployment, delivery, metrics, backup, restore, and incident procedures.
+
 Authenticated publishers can manage their own availability from Profile. Professional profiles begin in a pending state; bulk imports and aggregate-publication claims require an audited verification step. Approved claims create a new operator publication and preserve the original source attribution.
 
 If a default host port is occupied, override it without changing container networking, for example:
@@ -41,6 +43,9 @@ Migrations are ordered SQL files under `infra/postgres/`. Docker runs them throu
 
 ```sh
 pnpm check
+DATABASE_URL='postgres://...' pnpm test:integration
+DATABASE_URL='postgres://...' pnpm test:e2e
+LOAD_BASE_URL='http://localhost:4000' pnpm test:load
 docker compose config --quiet
 ```
 
@@ -49,9 +54,9 @@ docker compose config --quiet
 1. Mobile search, opportunity detail, saved state, monitor, and alert UI. Implemented.
 2. Basic comparison and property Q&A. Implemented.
 3. First authorized production inventory feed and media pipeline.
-4. Email/push adapters.
+4. Email webhook adapter and delivery state machine. Implemented. Push remains later.
 5. Operator claim and listing-management flow. Implemented.
-6. Product analytics, observability, security hardening, and load tests.
+6. Metrics, account security, and automated accessibility gates. Implemented. Product analytics and load calibration remain.
 
 ## Architecture rule
 

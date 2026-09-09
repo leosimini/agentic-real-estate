@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { query, withTransaction } from '@realty/db';
+import { createAccountToken } from '@realty/core';
 import { buildApp } from '../../src/app.js';
 import { loadApiConfig } from '../../src/config.js';
 
@@ -269,6 +270,77 @@ integration('API and PostgreSQL integration', () => {
           await client.query('DELETE FROM app_user WHERE id = $1', [id]);
         }
       });
+      await app.close();
+    }
+  });
+
+  it('verifies email, resets a password, and revokes existing sessions', async () => {
+    const accountTokenSecret = 'integration-account-token-secret-with-at-least-thirty-two-characters';
+    const app = await buildApp(loadApiConfig({
+      NODE_ENV: 'test',
+      JWT_SECRET: 'integration-test-secret-with-at-least-thirty-two-characters',
+      ACCOUNT_TOKEN_SECRET: accountTokenSecret
+    }));
+    const email = `account-${randomUUID()}@example.test`;
+    let userId = '';
+    try {
+      const registration = await app.inject({
+        method: 'POST', url: '/v1/auth/register',
+        payload: { email, password: 'original secure password' }
+      });
+      assert.equal(registration.statusCode, 201, registration.body);
+      userId = registration.json().user.id;
+      const oldToken = registration.json().token as string;
+      const verification = await query<{ id: string; user_id: string; purpose: 'verify_email' }>(`
+        SELECT id, user_id, purpose FROM account_token
+        WHERE user_id=$1 AND purpose='verify_email' AND consumed_at IS NULL
+      `, [userId]);
+      const verificationRow = verification.rows[0]!;
+      const verificationToken = createAccountToken({
+        id: verificationRow.id, userId: verificationRow.user_id, purpose: verificationRow.purpose
+      }, accountTokenSecret);
+      const confirmed = await app.inject({
+        method: 'POST', url: '/v1/auth/verification/confirm',
+        payload: { token: verificationToken }
+      });
+      assert.equal(confirmed.statusCode, 200, confirmed.body);
+
+      const recovery = await app.inject({
+        method: 'POST', url: '/v1/auth/password/request', payload: { email }
+      });
+      assert.equal(recovery.statusCode, 202, recovery.body);
+      const reset = await query<{ id: string; user_id: string; purpose: 'reset_password' }>(`
+        SELECT id, user_id, purpose FROM account_token
+        WHERE user_id=$1 AND purpose='reset_password' AND consumed_at IS NULL
+      `, [userId]);
+      const resetRow = reset.rows[0]!;
+      const resetToken = createAccountToken({
+        id: resetRow.id, userId: resetRow.user_id, purpose: resetRow.purpose
+      }, accountTokenSecret);
+      const changed = await app.inject({
+        method: 'POST', url: '/v1/auth/password/reset',
+        payload: { token: resetToken, password: 'new secure password value' }
+      });
+      assert.equal(changed.statusCode, 200, changed.body);
+
+      const revoked = await app.inject({
+        method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${oldToken}` }
+      });
+      assert.equal(revoked.statusCode, 401);
+      const oldLogin = await app.inject({
+        method: 'POST', url: '/v1/auth/login', payload: { email, password: 'original secure password' }
+      });
+      assert.equal(oldLogin.statusCode, 401);
+      const newLogin = await app.inject({
+        method: 'POST', url: '/v1/auth/login', payload: { email, password: 'new secure password value' }
+      });
+      assert.equal(newLogin.statusCode, 200, newLogin.body);
+      assert.equal(newLogin.json().user.emailVerified, true);
+    } finally {
+      if (userId) {
+        await query('DELETE FROM audit_event WHERE actor_user_id=$1', [userId]);
+        await query('DELETE FROM app_user WHERE id=$1', [userId]);
+      }
       await app.close();
     }
   });

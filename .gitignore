@@ -4,6 +4,7 @@ dist/
 coverage/
 playwright-report/
 test-results/
+backups/
 
 .env
 .env.*
@@ -12,4 +13,3 @@ test-results/
 .DS_Store
 *.log
 *.tsbuildinfo
-

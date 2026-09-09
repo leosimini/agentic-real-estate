@@ -141,8 +141,8 @@ export class ApiError extends Error {
 export async function api<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
   const headers = new Headers(options.headers);
   if (options.body && !headers.has('content-type')) headers.set('content-type', 'application/json');
-  if (token) headers.set('authorization', `Bearer ${token}`);
-  const response = await fetch(`/api${path}`, { ...options, headers, cache: 'no-store' });
+  if (token && token !== 'cookie-session') headers.set('authorization', `Bearer ${token}`);
+  const response = await fetch(`/api${path}`, { ...options, headers, credentials: 'same-origin', cache: 'no-store' });
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as ApiErrorBody;
     throw new ApiError(
