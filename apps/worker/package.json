@@ -7,13 +7,15 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/worker.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test"
+    "test": "tsx --test test/**/*.test.ts",
+    "test:integration": "tsx --test test/**/*.integration.test.ts"
   },
   "dependencies": {
     "@langchain/core": "^1.0.0",
     "@langchain/langgraph": "^1.0.0",
     "@realty/core": "workspace:*",
     "@realty/db": "workspace:*",
+    "@realty/monitoring": "workspace:*",
     "pg-boss": "^12.26.3",
     "zod": "^4.1.5"
   },

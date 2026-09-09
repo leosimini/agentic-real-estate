@@ -5,44 +5,44 @@ Last updated: 2026-09-09
 ## Completed
 
 - Repository synchronized and baseline architecture reviewed.
-- Local Node.js, pnpm, and Docker prerequisites verified.
-- Initial dependency lockfile generated.
-- Baseline typecheck and production build pass.
-- Environment and generated-file hygiene added.
+- Reproducible pnpm/Docker foundation, versioned transactional migrations, readiness checks, and CI validation.
+- Runtime domain contracts, deterministic hard-constraint matching, and guarded source-adapter boundaries.
+- Authenticated, tenant-scoped API for canonical search/detail, saved/dismissed state, monitors, alerts, and direct publishing.
+- Transactional direct publishing with immutable source snapshots, canonical candidate evidence, review queues, and idempotent replay.
+- Leased recurring monitor execution with persisted snapshots, meaningful-change suppression, and idempotent in-app delivery.
+- Automated coverage: 30 unit/contract checks plus three PostgreSQL integration scenarios.
+- Product direction recorded in `PRODUCT.md`: Spanish (Argentina), ARS/USD, five launch markets, and WCAG 2.2 AA.
 
 ## Current work
 
-- Stabilizing migrations, configuration, CI, health checks, and test execution.
-- Defining validated domain contracts for ingestion and canonical search.
-- Replacing non-idempotent publication creation with a transactional canonical pipeline.
+- Building the mobile-first Discover → Detail → Save/Dismiss → Monitor → Alert journey.
+- Converting remaining raw monitor, alert, and history responses to explicit API contracts.
+- Adding AI-assisted intent parsing behind deterministic validation and user confirmation.
 
 ## Next priorities
 
-1. Versioned PostgreSQL migrations and deterministic canonicalization.
-2. Simulated, manual/import, and extensible HTTP source adapters.
-3. Canonical opportunity search and detail APIs with provenance.
-4. Identity, authorization, ownership, and audit boundaries.
-5. Persistent monitors with meaningful-change suppression and idempotent delivery.
-6. Mobile Discover-to-Detail vertical slice.
+1. Mobile Discover-to-Detail vertical slice and authenticated navigation.
+2. Typed monitor editing, pause/resume, and alert read state.
+3. AI intent parsing and explanation layer.
+4. Authorized launch-source integration and media pipeline.
+5. Operator and listing-management workflows.
 
 ## Known technical debt
 
-- Existing API and worker use raw database rows and broad `any` casts.
-- Current worker marks every match as new and can create repeated alerts.
-- Existing web shell is static and its controls are not wired to product behavior.
-- Automated test coverage is being established from zero.
+- Monitor, alert, and property-history endpoints still expose database-shaped rows.
+- Current opportunity discovery uses PostgreSQL filtering; ranking and geo search need production calibration.
+- The existing web shell is static and its controls are not yet wired to product behavior.
+- No authorized external inventory feed or production media storage has been selected.
 
 ## Open product decisions
 
-- Primary launch locale and whether the first release is English, Spanish, or bilingual.
-- Brand personality and concrete product UI references.
 - Initial authorized external data source and its contractual limits.
-- First production notification channels beyond in-app delivery.
+- First production notification channel beyond in-app delivery.
+- Reference products to sharpen the agreed calm, discerning, trustworthy visual direction.
 
 ## Production blockers
 
-- Authentication and tenant-safe authorization.
-- Idempotent ingestion, monitor execution, alert creation, and delivery.
 - Media storage and upload security.
-- Rate limiting, audit trails, production telemetry, backups, and restore validation.
+- Production telemetry, secrets management, backups, and restore validation.
+- Account recovery and email verification.
 - End-to-end accessibility, performance, and security release gates.

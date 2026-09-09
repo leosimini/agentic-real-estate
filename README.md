@@ -13,6 +13,8 @@ The primary object is a canonical property opportunity, not a source listing. Mu
 - `apps/worker`: PostgreSQL-backed durable jobs and monitor-agent workflow.
 - `packages/core`: shared domain types and deterministic ranking helpers.
 - `packages/db`: shared PostgreSQL connection.
+- `packages/ingestion`: validated source adapters and canonical candidate scoring.
+- `packages/monitoring`: deterministic change detection, suppression, digest, and idempotency rules.
 - `infra/postgres`: canonical data model with pgvector enabled.
 
 ## Run locally
@@ -39,16 +41,12 @@ docker compose config --quiet
 
 ## MVP implementation sequence
 
-1. Authentication and user profiles.
-2. Production source adapter contract and first authorized feed.
-3. Canonicalization and duplicate resolver.
-4. Search API plus map/list UI.
-5. Natural-language monitor creation.
-6. Recurring monitor execution and in-app alerts.
-7. Email/push adapters.
-8. Owner publishing flow.
-9. Operator claim and listing-management flow.
-10. Product analytics, observability, security hardening, and load tests.
+1. Mobile search, opportunity detail, saved state, monitor, and alert UI.
+2. Natural-language intent parsing with typed confirmation.
+3. First authorized production inventory feed and media pipeline.
+4. Email/push adapters.
+5. Operator claim and listing-management flow.
+6. Product analytics, observability, security hardening, and load tests.
 
 ## Architecture rule
 

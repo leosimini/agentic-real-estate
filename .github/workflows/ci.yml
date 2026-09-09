@@ -12,6 +12,23 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: realty
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d realty"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://app:app@127.0.0.1:5432/realty
+      JWT_SECRET: ci-only-secret-with-at-least-thirty-two-characters
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -25,5 +42,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm db:migrate
+      - run: pnpm test:integration
       - run: pnpm build
       - run: docker compose config --quiet

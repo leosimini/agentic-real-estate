@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "pnpm -r --parallel dev",
     "build": "pnpm -r build",
-    "typecheck": "pnpm --filter @realty/core build && pnpm --filter @realty/db build && pnpm -r typecheck",
+    "typecheck": "pnpm --filter @realty/core build && pnpm --filter @realty/db build && pnpm --filter @realty/ingestion build && pnpm --filter @realty/monitoring build && pnpm -r typecheck",
     "test": "pnpm -r test",
+    "test:integration": "pnpm --filter @realty/api test:integration && pnpm --filter @realty/worker test:integration",
     "check": "pnpm typecheck && pnpm test && pnpm build",
     "db:migrate": "pnpm --filter @realty/db migrate",
     "docker:up": "docker compose up --build",

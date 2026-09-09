@@ -22,6 +22,15 @@ export type CanonicalConfidenceState = z.infer<typeof canonicalConfidenceStateSc
 export const publisherTypeSchema = z.enum(['owner', 'operator', 'aggregated']);
 export type PublisherType = z.infer<typeof publisherTypeSchema>;
 
+export const freshnessSchema = z.enum([
+  'verified_today',
+  'verified_recently',
+  'status_uncertain',
+  'possibly_unavailable',
+  'removed_from_source'
+]);
+export type Freshness = z.infer<typeof freshnessSchema>;
+
 export const normalizedPublicationSchema = z.object({
   title: nonEmptyTextSchema.optional(),
   description: z.string().trim().optional(),
@@ -106,6 +115,7 @@ export const opportunityDtoSchema = z.object({
   floor: nonEmptyTextSchema.nullable().optional(),
   publicationCount: z.number().int().nonnegative(),
   lastVerifiedAt: nullableTimestampSchema,
+  freshness: freshnessSchema.optional(),
   preferenceMatches: z.array(nonEmptyTextSchema).optional()
 }).strict();
 export type OpportunityDto = z.infer<typeof opportunityDtoSchema>;
